@@ -580,6 +580,7 @@ pub type InterceptRequest {
 /// - `Continue`: Execute the query normally against the database
 /// - `Respond`: Return this data instead of querying the database
 /// - `Fail`: Return this error instead of querying the database
+/// - `Capture`: Execute the query and capture the raw result for recording
 pub type InterceptResult {
   /// Execute the query normally
   Continue
@@ -587,6 +588,8 @@ pub type InterceptResult {
   Respond(count: Int, rows: List(Dynamic))
   /// Return an error without querying the database
   Fail(error: QueryError)
+  /// Execute query and capture result for recording
+  Capture(on_result: fn(Result(#(Int, List(Dynamic)), QueryError)) -> Nil)
 }
 
 @external(erlang, "pog_ffi", "query")
@@ -687,6 +690,23 @@ pub fn execute(
         Respond(count:, rows:) ->
           decode_intercepted_rows(count, rows, query.row_decoder)
         Fail(error:) -> Error(error)
+        Capture(on_result:) -> {
+          // Execute real query
+          let result = run_query(pool, query.sql, parameters, query.timeout)
+          // Let interceptor capture the raw result
+          on_result(result)
+          // Decode and return normally
+          case result {
+            Ok(#(count, rows)) -> {
+              use decoded <- result.try(
+                list.try_map(over: rows, with: decode.run(_, query.row_decoder))
+                |> result.map_error(UnexpectedResultType),
+              )
+              Ok(Returned(count, decoded))
+            }
+            Error(err) -> Error(err)
+          }
+        }
       }
     }
     None -> execute_query(pool, query, parameters)
