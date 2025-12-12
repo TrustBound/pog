@@ -27,6 +27,7 @@ const default_port: Int = 5432
 pub opaque type Connection {
   Pool(Name(Message))
   SingleConnection(SingleConnection)
+  Disconnected(Interceptor)
 }
 
 type SingleConnection
@@ -40,6 +41,29 @@ pub type Message
 ///
 pub fn named_connection(name: Name(Message)) -> Connection {
   Pool(name)
+}
+
+/// Create a connection that uses an interceptor without a database.
+///
+/// No database connection is established. All queries are routed to the
+/// interceptor. The interceptor must handle all queries - returning `Continue`
+/// will result in a `ConnectionUnavailable` error.
+///
+/// ## Example
+///
+/// ```gleam
+/// let interceptor = Interceptor(fn(request) {
+///   case request.sql {
+///     "SELECT * FROM users" -> Respond(1, [user_data])
+///     _ -> Fail(PostgresqlError("UNSUPPORTED", "unsupported", "Query not supported"))
+///   }
+/// })
+///
+/// let connection = pog.disconnected(interceptor)
+/// ```
+///
+pub fn disconnected(interceptor: Interceptor) -> Connection {
+  Disconnected(interceptor)
 }
 
 /// The configuration for a pool of connections.
@@ -469,6 +493,14 @@ pub fn transaction(
   callback: fn(Connection) -> Result(t, error),
 ) -> Result(t, TransactionError(error)) {
   case pool {
+    Disconnected(interceptor) -> {
+      // For disconnected connections (playback mode), call the callback
+      // with the disconnected connection so interceptor can serve recorded queries
+      case callback(Disconnected(interceptor)) {
+        Ok(value) -> Ok(value)
+        Error(err) -> Error(TransactionRolledBack(err))
+      }
+    }
     SingleConnection(conn) -> {
       transaction_layer(conn, callback)
     }
@@ -524,8 +556,16 @@ fn checkout(
   pool: Name(Message),
 ) -> Result(#(Reference, SingleConnection), QueryError)
 
+@external(erlang, "pog_ffi", "cleanup_checkout_interceptor")
+fn cleanup_checkout_interceptor(conn: SingleConnection) -> Nil
+
 @external(erlang, "pgo", "checkin")
-fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic
+fn do_checkin(ref: Reference, conn: SingleConnection) -> Dynamic
+
+fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic {
+  cleanup_checkout_interceptor(conn)
+  do_checkin(ref, conn)
+}
 
 pub fn nullable(inner_type: fn(a) -> Value, value: Option(a)) -> Value {
   case value {
@@ -678,38 +718,67 @@ pub fn execute(
   on pool: Connection,
 ) -> Result(Returned(t), QueryError) {
   let parameters = list.reverse(query.parameters)
-  
-  // Check for interceptor
-  case get_pool_interceptor(pool) {
-    Some(interceptor) -> {
+
+  case pool {
+    Disconnected(interceptor) -> {
+      // Disconnected connection - route through interceptor only
       let request =
-        InterceptRequest(sql: query.sql, parameters: parameters, timeout: query.timeout)
-      
+        InterceptRequest(
+          sql: query.sql,
+          parameters: parameters,
+          timeout: query.timeout,
+        )
+
       case interceptor.intercept(request) {
-        Continue -> execute_query(pool, query, parameters)
+        Continue -> Error(ConnectionUnavailable)
         Respond(count:, rows:) ->
           decode_intercepted_rows(count, rows, query.row_decoder)
         Fail(error:) -> Error(error)
-        Capture(on_result:) -> {
-          // Execute real query
-          let result = run_query(pool, query.sql, parameters, query.timeout)
-          // Let interceptor capture the raw result
-          on_result(result)
-          // Decode and return normally
-          case result {
-            Ok(#(count, rows)) -> {
-              use decoded <- result.try(
-                list.try_map(over: rows, with: decode.run(_, query.row_decoder))
-                |> result.map_error(UnexpectedResultType),
-              )
-              Ok(Returned(count, decoded))
-            }
-            Error(err) -> Error(err)
-          }
-        }
+        Capture(_) -> Error(ConnectionUnavailable)
       }
     }
-    None -> execute_query(pool, query, parameters)
+
+    Pool(_) | SingleConnection(_) -> {
+      // Connected pool or connection - check for interceptor
+      case get_pool_interceptor(pool) {
+        Some(interceptor) -> {
+          let request =
+            InterceptRequest(
+              sql: query.sql,
+              parameters: parameters,
+              timeout: query.timeout,
+            )
+
+          case interceptor.intercept(request) {
+            Continue -> execute_query(pool, query, parameters)
+            Respond(count:, rows:) ->
+              decode_intercepted_rows(count, rows, query.row_decoder)
+            Fail(error:) -> Error(error)
+            Capture(on_result:) -> {
+              // Execute real query
+              let result = run_query(pool, query.sql, parameters, query.timeout)
+              // Let interceptor capture the raw result
+              on_result(result)
+              // Decode and return normally
+              case result {
+                Ok(#(count, rows)) -> {
+                  use decoded <- result.try(
+                    list.try_map(over: rows, with: decode.run(
+                      _,
+                      query.row_decoder,
+                    ))
+                    |> result.map_error(UnexpectedResultType),
+                  )
+                  Ok(Returned(count, decoded))
+                }
+                Error(err) -> Error(err)
+              }
+            }
+          }
+        }
+        None -> execute_query(pool, query, parameters)
+      }
+    }
   }
 }
 

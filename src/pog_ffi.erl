@@ -1,6 +1,6 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, set_pool_interceptor/2]).
+-export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, set_pool_interceptor/2, cleanup_checkout_interceptor/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
@@ -118,7 +118,13 @@ query_extended(Conn, Sql) ->
 
 checkout(Name) when is_atom(Name) ->
     case pgo:checkout(Name) of
-        {ok, Ref, Conn} -> {ok, {Ref, Conn}};
+        {ok, Ref, Conn} ->
+            % Copy pool's interceptor to connection for transaction support
+            case get({pog_interceptor, Name}) of
+                undefined -> ok;
+                Interceptor -> put({pog_conn_interceptor, Conn}, Interceptor)
+            end,
+            {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
@@ -156,15 +162,21 @@ set_pool_interceptor(PoolName, Interceptor) when is_atom(PoolName) ->
 
 %% Get interceptor for a connection
 get_pool_interceptor(Connection) ->
-    PoolName = case Connection of
-        {pool, Name} -> Name;
-        {single_connection, _} -> undefined
-    end,
-    case PoolName of
-        undefined -> none;
-        _ ->
-            case get({pog_interceptor, PoolName}) of
+    case Connection of
+        {pool, Name} ->
+            case get({pog_interceptor, Name}) of
+                undefined -> none;
+                Interceptor -> {some, Interceptor}
+            end;
+        {single_connection, Conn} ->
+            % For single connections (from transactions), lookup by connection handle
+            case get({pog_conn_interceptor, Conn}) of
                 undefined -> none;
                 Interceptor -> {some, Interceptor}
             end
     end.
+
+%% Cleanup interceptor reference when connection is checked back in
+cleanup_checkout_interceptor(Conn) ->
+    erase({pog_conn_interceptor, Conn}),
+    nil.
