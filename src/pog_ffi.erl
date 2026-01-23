@@ -5,6 +5,17 @@
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
+-define(INTERCEPTOR_TABLE, pog_interceptor_table).
+
+ensure_interceptor_table() ->
+    case ets:info(?INTERCEPTOR_TABLE) of
+        undefined ->
+            ets:new(?INTERCEPTOR_TABLE, [named_table, public, set]),
+            ok;
+        _ ->
+            ok
+    end.
+
 null() ->
     null.
 
@@ -120,9 +131,10 @@ checkout(Name) when is_atom(Name) ->
     case pgo:checkout(Name) of
         {ok, Ref, Conn} ->
             % Copy pool's interceptor to connection for transaction support
-            case get({pog_interceptor, Name}) of
-                undefined -> ok;
-                Interceptor -> put({pog_conn_interceptor, Conn}, Interceptor)
+            ensure_interceptor_table(),
+            case ets:lookup(?INTERCEPTOR_TABLE, Name) of
+                [{Name, Interceptor}] -> put({pog_conn_interceptor, Conn}, Interceptor);
+                _ -> ok
             end,
             {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
@@ -155,18 +167,20 @@ convert_error(closed) ->
     query_timeout.
 
 %% Interceptor support
-%% Store interceptor in process dictionary keyed by pool name
+%% Store interceptor in ETS keyed by pool name
 set_pool_interceptor(PoolName, Interceptor) when is_atom(PoolName) ->
-    put({pog_interceptor, PoolName}, Interceptor),
+    ensure_interceptor_table(),
+    ets:insert(?INTERCEPTOR_TABLE, {PoolName, Interceptor}),
     nil.
 
 %% Get interceptor for a connection
 get_pool_interceptor(Connection) ->
     case Connection of
         {pool, Name} ->
-            case get({pog_interceptor, Name}) of
-                undefined -> none;
-                Interceptor -> {some, Interceptor}
+            ensure_interceptor_table(),
+            case ets:lookup(?INTERCEPTOR_TABLE, Name) of
+                [{Name, Interceptor}] -> {some, Interceptor};
+                _ -> none
             end;
         {single_connection, Conn} ->
             % For single connections (from transactions), lookup by connection handle
