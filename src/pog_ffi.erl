@@ -1,6 +1,6 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, set_pool_interceptor/2, cleanup_checkout_interceptor/1]).
+-export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, get_pool_interceptor_safe/1, set_pool_interceptor/2, cleanup_checkout_interceptor/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
@@ -10,7 +10,10 @@
 ensure_interceptor_table() ->
     case ets:info(?INTERCEPTOR_TABLE) of
         undefined ->
-            ets:new(?INTERCEPTOR_TABLE, [named_table, public, set]),
+            ets:new(
+                ?INTERCEPTOR_TABLE,
+                [named_table, public, set, {heir, whereis(init), undefined}]
+            ),
             ok;
         _ ->
             ok
@@ -188,6 +191,14 @@ get_pool_interceptor(Connection) ->
                 undefined -> none;
                 Interceptor -> {some, Interceptor}
             end
+    end.
+
+get_pool_interceptor_safe(Connection) ->
+    case Connection of
+        {pool, _} -> get_pool_interceptor(Connection);
+        {single_connection, _} -> get_pool_interceptor(Connection);
+        {disconnected, _} -> none;
+        _ -> none
     end.
 
 %% Cleanup interceptor reference when connection is checked back in
