@@ -174,13 +174,23 @@ convert_error(closed) ->
 %% clause those shapes raise function_clause and crash the calling
 %% process — which previously took down audit_service and other
 %% long-lived service actors. We map them all to connection_unavailable
-%% so callers see a known, recoverable variant and the actual driver
-%% term is logged for diagnosis.
+%% so callers see a known, recoverable variant.
+%%
+%% Emits a structured `logger:warning` so consumers with a structured
+%% formatter (e.g. JSON) get queryable fields, while consumers with a
+%% string formatter still get something readable via `~p`. We
+%% intentionally do NOT set `domain` metadata: many default handlers
+%% install a `no_domain` filter that drops events whose domain is set
+%% to anything other than the handler's expected list, which would
+%% silence this warning instead of routing it. The error term is
+%% captured as a binary so it can't tunnel through a JSON formatter as
+%% a raw Erlang term.
 convert_error(Other) ->
-    logger:warning(
-        "pog convert_error: unhandled driver error variant: ~p",
-        [Other]
-    ),
+    logger:warning(#{
+        component => pog_convert_error,
+        event => unhandled_driver_error,
+        error_term => list_to_binary(io_lib:format("~p", [Other]))
+    }),
     connection_unavailable.
 
 %% Interceptor support
