@@ -1,9 +1,23 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1]).
+-export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, get_pool_interceptor_safe/1, set_pool_interceptor/2, cleanup_checkout_interceptor/1, convert_error/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
+
+-define(INTERCEPTOR_TABLE, pog_interceptor_table).
+
+ensure_interceptor_table() ->
+    case ets:info(?INTERCEPTOR_TABLE) of
+        undefined ->
+            ets:new(
+                ?INTERCEPTOR_TABLE,
+                [named_table, public, set, {heir, whereis(init), undefined}]
+            ),
+            ok;
+        _ ->
+            ok
+    end.
 
 null() ->
     null.
@@ -54,8 +68,14 @@ start(Config) ->
         idle_interval = IdleInterval,
         trace = Trace,
         ip_version = IpVersion,
-        rows_as_map = RowsAsMap
+        rows_as_map = RowsAsMap,
+        interceptor = Interceptor
     } = Config,
+    % Store interceptor if present
+    case Interceptor of
+        {some, I} -> set_pool_interceptor(PoolName, I);
+        none -> ok
+    end,
     {SslActivated, SslOptions} = default_ssl_options(Host, Ssl),
     Options1 = #{
         host => Host,
@@ -112,7 +132,14 @@ query_extended(Conn, Sql) ->
 
 checkout(Name) when is_atom(Name) ->
     case pgo:checkout(Name) of
-        {ok, Ref, Conn} -> {ok, {Ref, Conn}};
+        {ok, Ref, Conn} ->
+            % Copy pool's interceptor to connection for transaction support
+            ensure_interceptor_table(),
+            case ets:lookup(?INTERCEPTOR_TABLE, Name) of
+                [{Name, Interceptor}] -> put({pog_conn_interceptor, Conn}, Interceptor);
+                _ -> ok
+            end,
+            {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
@@ -140,4 +167,65 @@ convert_error(#{
     Got = list_to_binary(io_lib:format("~p", [Value])),
     {unexpected_argument_type, Expected, Got};
 convert_error(closed) ->
-    query_timeout.
+    query_timeout;
+%% Catch-all: pgo can emit shapes outside the documented set
+%% (e.g. {pgo_error, _}, {unexpected_message, _}, client_disconnected,
+%% client_timeout, ssl_refused, {unimplemented, _}, etc.). Without this
+%% clause those shapes raise function_clause and crash the calling
+%% process — which previously took down audit_service and other
+%% long-lived service actors. We map them all to connection_unavailable
+%% so callers see a known, recoverable variant.
+%%
+%% Emits a structured `logger:warning` so consumers with a structured
+%% formatter (e.g. JSON) get queryable fields, while consumers with a
+%% string formatter still get something readable via `~p`. We
+%% intentionally do NOT set `domain` metadata: many default handlers
+%% install a `no_domain` filter that drops events whose domain is set
+%% to anything other than the handler's expected list, which would
+%% silence this warning instead of routing it. The error term is
+%% captured as a binary so it can't tunnel through a JSON formatter as
+%% a raw Erlang term.
+convert_error(Other) ->
+    logger:warning(#{
+        component => pog_convert_error,
+        event => unhandled_driver_error,
+        error_term => list_to_binary(io_lib:format("~p", [Other]))
+    }),
+    connection_unavailable.
+
+%% Interceptor support
+%% Store interceptor in ETS keyed by pool name
+set_pool_interceptor(PoolName, Interceptor) when is_atom(PoolName) ->
+    ensure_interceptor_table(),
+    ets:insert(?INTERCEPTOR_TABLE, {PoolName, Interceptor}),
+    nil.
+
+%% Get interceptor for a connection
+get_pool_interceptor(Connection) ->
+    case Connection of
+        {pool, Name} ->
+            ensure_interceptor_table(),
+            case ets:lookup(?INTERCEPTOR_TABLE, Name) of
+                [{Name, Interceptor}] -> {some, Interceptor};
+                _ -> none
+            end;
+        {single_connection, Conn} ->
+            % For single connections (from transactions), lookup by connection handle
+            case get({pog_conn_interceptor, Conn}) of
+                undefined -> none;
+                Interceptor -> {some, Interceptor}
+            end
+    end.
+
+get_pool_interceptor_safe(Connection) ->
+    case Connection of
+        {pool, _} -> get_pool_interceptor(Connection);
+        {single_connection, _} -> get_pool_interceptor(Connection);
+        {disconnected, _} -> none;
+        _ -> none
+    end.
+
+%% Cleanup interceptor reference when connection is checked back in
+cleanup_checkout_interceptor(Conn) ->
+    erase({pog_conn_interceptor, Conn}),
+    nil.
