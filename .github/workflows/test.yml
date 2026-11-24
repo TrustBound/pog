@@ -35,5 +35,5 @@ jobs:
       - run: gleam test
         env:
           PGPORT: 5438
-          POG_SSL_PGPORT: 5439
+          DREAM_POG_SSL_PGPORT: 5439
       - run: gleam format --check src test

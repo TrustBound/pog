@@ -1,11 +1,11 @@
--module(pog_test_ffi).
+-module(dream_pog_test_ffi).
 
 -export([env_port/2, ssl_probe/1, system_cacerts/0, interceptor_rows/1,
          interceptor_keeper/1]).
 
 %% The rows of the interceptor table for the pool Name.
 interceptor_rows(Name) ->
-    try ets:lookup(pog_interceptor_table, Name)
+    try ets:lookup(dream_pog_interceptor_table, Name)
     catch error:badarg -> []
     end.
 
@@ -24,21 +24,21 @@ env_port(Name, Default) ->
         Value -> list_to_integer(Value)
     end.
 
-%% Opens one connection with the pool options that pog makes from the
+%% Opens one connection with the pool options that dream_pog makes from the
 %% config, without a pool. Gives the driver's error as text, so that a test
 %% can see why a connection fails (a pool only says that no connection is
 %% available).
 ssl_probe(Config) ->
-    case pog_ffi:pool_options(Config) of
+    case dream_pog_ffi:pool_options(Config) of
         {error, Reason} ->
             {error, Reason};
         {ok, Options} ->
-            % The same change as pgo_pool:normalize_pool_config/1:
+            % The same change as dream_pgo_pool:normalize_pool_config/1:
             % the pool gives the driver every binary value as a string.
             Normalized = maps:map(fun(_, V) when is_binary(V) -> binary_to_list(V);
                                      (_, V) -> V
                                   end, Options),
-            case pgo_handler:open(pog_ssl_probe, Normalized) of
+            case dream_pgo_handler:open(dream_pog_ssl_probe, Normalized) of
                 {ok, _Conn} ->
                     {ok, nil};
                 {error, Reason} ->

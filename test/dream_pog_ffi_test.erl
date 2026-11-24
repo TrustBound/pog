@@ -1,8 +1,8 @@
-%%% Regression tests for `pog_ffi:convert_error/1`.
+%%% Regression tests for `dream_pog_ffi:convert_error/1`.
 %%%
 %%% Background: a previous version had no catch-all clause. Any driver
 %%% error term outside the documented set raised `function_clause`, which
-%%% propagated up through `pog.execute` and crashed the calling
+%%% propagated up through `dream_pog.execute` and crashed the calling
 %%% process. An application with long-lived processes that run queries
 %%% lost all of them when the driver returned an undocumented error.
 %%%
@@ -17,7 +17,7 @@
 %%% the catch-all does what it's supposed to do at the layer that
 %%% matters (process survival), not just at the FFI return-value layer.
 
--module(pog_ffi_test).
+-module(dream_pog_ffi_test).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -27,14 +27,17 @@
 
 known_none_available_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error(none_available)).
+                 dream_pog_ffi:convert_error(none_available)).
+
+known_query_timeout_test() ->
+    ?assertEqual(query_timeout, dream_pog_ffi:convert_error(query_timeout)).
 
 known_closed_test() ->
-    ?assertEqual(query_timeout, pog_ffi:convert_error(closed)).
+    ?assertEqual(connection_unavailable, dream_pog_ffi:convert_error(closed)).
 
 known_unexpected_argument_count_test() ->
     ?assertEqual({unexpected_argument_count, 2, 3},
-                 pog_ffi:convert_error({pgo_protocol, {parameters, 2, 3}})).
+                 dream_pog_ffi:convert_error({dream_pgo_protocol, {parameters, 2, 3}})).
 
 known_pgsql_error_with_constraint_test() ->
     ErrorTerm = {pgsql_error, #{
@@ -46,7 +49,7 @@ known_pgsql_error_with_constraint_test() ->
                   <<"duplicate key">>,
                   <<"users_email_key">>,
                   <<"Key (email)=(x) already exists.">>},
-                 pog_ffi:convert_error(ErrorTerm)).
+                 dream_pog_ffi:convert_error(ErrorTerm)).
 
 %% --------------------------------------------------------------------
 %% Catch-all: previously-fatal shapes now return connection_unavailable.
@@ -57,33 +60,33 @@ known_pgsql_error_with_constraint_test() ->
 %% no longer do, and that the catch-all is wired up.
 %% --------------------------------------------------------------------
 
-catchall_pgo_error_test() ->
+catchall_dream_pgo_error_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error({pgo_error, some_inner})).
+                 dream_pog_ffi:convert_error({dream_pgo_error, some_inner})).
 
 catchall_client_disconnected_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error(client_disconnected)).
+                 dream_pog_ffi:convert_error(client_disconnected)).
 
 catchall_unexpected_message_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error({unexpected_message, foo})).
+                 dream_pog_ffi:convert_error({unexpected_message, foo})).
 
 catchall_ssl_refused_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error(ssl_refused)).
+                 dream_pog_ffi:convert_error(ssl_refused)).
 
 catchall_unimplemented_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error({unimplemented, sasl_server_final})).
+                 dream_pog_ffi:convert_error({unimplemented, sasl_server_final})).
 
 catchall_arbitrary_atom_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error(some_atom_we_have_never_seen)).
+                 dream_pog_ffi:convert_error(some_atom_we_have_never_seen)).
 
 catchall_arbitrary_tuple_test() ->
     ?assertEqual(connection_unavailable,
-                 pog_ffi:convert_error({a, b, c, d, e})).
+                 dream_pog_ffi:convert_error({a, b, c, d, e})).
 
 %% --------------------------------------------------------------------
 %% The high-signal test: a process calling convert_error/1 with a
@@ -95,9 +98,9 @@ catchall_arbitrary_tuple_test() ->
 actor_survives_unmatched_shape_test() ->
     Self = self(),
     {Pid, MonRef} = spawn_monitor(fun() ->
-        connection_unavailable = pog_ffi:convert_error({pgo_error, x}),
-        connection_unavailable = pog_ffi:convert_error(client_disconnected),
-        connection_unavailable = pog_ffi:convert_error(ssl_refused),
+        connection_unavailable = dream_pog_ffi:convert_error({dream_pgo_error, x}),
+        connection_unavailable = dream_pog_ffi:convert_error(client_disconnected),
+        connection_unavailable = dream_pog_ffi:convert_error(ssl_refused),
         Self ! {self(), all_calls_returned}
     end),
     receive

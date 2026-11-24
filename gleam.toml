@@ -1,11 +1,16 @@
-name = "pog"
+# TODO before release: replace the path dependency `dream_pgo = { path = "../dream_pgo" }`
+# with a Hex version range after dream_pgo is published. Hex packages must not
+# have path or git dependencies. The path dependency needs a dream_pgo checkout
+# next to this one; its gleam.toml lets Gleam build it.
+name = "dream_pog"
 version = "4.1.0"
 gleam = ">= 1.11.0"
 licences = ["Apache-2.0"]
-description = "A PostgreSQL database client for Gleam, based on PGO"
+description = "A fork of pog, the PostgreSQL database client for Gleam, on the dream_pgo driver"
 
-repository = { type = "github", user = "lpil", repo = "pog" }
+repository = { type = "github", user = "TrustBound", repo = "dream_pog" }
 links = [
+  { title = "Upstream pog by Louis Pilfold", href = "https://github.com/lpil/pog" },
   { title = "Website", href = "https://gleam.run" },
   { title = "Sponsor", href = "https://github.com/sponsors/lpil" },
 ]
@@ -21,7 +26,7 @@ gleam_otp = ">= 1.0.0 and < 2.0.0"
 gleam_stdlib = ">= 0.51.0 and < 2.0.0"
 gleam_time = ">= 1.0.0 and < 2.0.0"
 exception = ">= 2.1.0 and < 3.0.0"
-pgo = ">= 0.14.0 and < 1.0.0"
+dream_pgo = { path = "../dream_pgo" }
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

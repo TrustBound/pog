@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+The first release of `dream_pog`, a fork of pog v4.1.0.
+
+- The package, the Gleam module and the Erlang module have new names:
+  `dream_pog` and `dream_pog_ffi`. The ETS table, the process dictionary key
+  and the logger component have the `dream_pog` prefix. To move from pog, use
+  `import dream_pog as pog`.
+- The driver is `dream_pgo`, a fork of pgo v0.20.0, not `pgo`.
+- A caller's `application_name` connection parameter now reaches the server
+  (a fix in `dream_pgo`).
 - Added a query interceptor: `interceptor`, `disconnected`, and the
   `Interceptor`, `InterceptRequest` and `InterceptResult` types. A pool
   without an interceptor does not use the interceptor of an earlier pool with
@@ -34,6 +43,10 @@
 - `Returned.count` is always an `Int`. A command without a row count, such
   as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
   count was an atom such as `table` or `nil`.
+- A query that runs past its timeout gives `QueryTimeout`: `dream_pgo` now
+  gives `query_timeout` for it. A connection that closes for another cause
+  gives `ConnectionUnavailable`. Before, every closed connection gave
+  `QueryTimeout`.
 - `url_config` uses the last value of a setting that occurs more than once,
   as libpq does. Before, `?sslmode=disable&sslmode=require` gave
   `SslDisabled`.

@@ -1,3 +1,4 @@
+import dream_pog as pog
 import exception
 import gleam/dynamic
 import gleam/dynamic/decode.{type Decoder}
@@ -10,7 +11,6 @@ import gleam/result
 import gleam/time/calendar
 import gleam/time/timestamp
 import gleeunit
-import pog
 
 pub fn main() {
   gleeunit.main()
@@ -28,7 +28,7 @@ fn start_default() -> actor.Started(pog.Connection) {
   started
 }
 
-@external(erlang, "pog_test_ffi", "env_port")
+@external(erlang, "dream_pog_test_ffi", "env_port")
 fn env_port(name: String, default: Int) -> Int
 
 fn default_config(name) {
@@ -829,6 +829,20 @@ pub fn interceptor_can_inspect_sql_test() {
   disconnect(started)
 }
 
+pub fn application_name_connection_parameter_reaches_the_server_test() {
+  let assert Ok(started) =
+    process.new_name("pog_test")
+    |> default_config
+    |> pog.connection_parameter("application_name", "dream_pog_name_test")
+    |> pog.start
+  let assert Ok(returned) =
+    pog.query("select current_setting('application_name')")
+    |> pog.returning(decode.at([0], decode.string))
+    |> pog.execute(started.data)
+  assert returned.rows == ["dream_pog_name_test"]
+  disconnect(started)
+}
+
 // Interceptor tests: pools, names, processes, transactions and crashes.
 
 fn respond_with(value: Int) -> pog.Interceptor {
@@ -962,10 +976,10 @@ pub fn interceptor_crash_in_transaction_gives_back_the_connection_test() {
 
 // Interceptor ownership tests: the interceptor belongs to the pool process.
 
-@external(erlang, "pog_test_ffi", "interceptor_rows")
+@external(erlang, "dream_pog_test_ffi", "interceptor_rows")
 fn interceptor_rows(name: process.Name(pog.Message)) -> List(dynamic.Dynamic)
 
-@external(erlang, "pog_test_ffi", "interceptor_keeper")
+@external(erlang, "dream_pog_test_ffi", "interceptor_keeper")
 fn interceptor_keeper(
   name: process.Name(pog.Message),
 ) -> Result(process.Pid, Nil)
@@ -1214,14 +1228,14 @@ pub fn capture_ok_passes_a_database_error_in_a_transaction_test() {
   disconnect(db)
 }
 
-/// Fails the query that sets the session setting `pog.touched`, and
+/// Fails the query that sets the session setting `dream_pog.touched`, and
 /// lets every other query run. The pool has one connection, so a later query
 /// sees the setting only if the database ran the failed query.
 fn fail_the_setting_query() -> option.Option(pog.Interceptor) {
   Some(
     pog.Interceptor(fn(request) {
       case request.sql {
-        "select set_config('pog.touched', 'yes', false)" ->
+        "select set_config('dream_pog.touched', 'yes', false)" ->
           pog.Fail(pog.InterceptorFailed(interceptor_reason()))
         _ -> pog.Continue
       }
@@ -1232,13 +1246,13 @@ fn fail_the_setting_query() -> option.Option(pog.Interceptor) {
 fn set_the_setting(
   connection: pog.Connection,
 ) -> Result(pog.Returned(Nil), pog.QueryError) {
-  pog.query("select set_config('pog.touched', 'yes', false)")
+  pog.query("select set_config('dream_pog.touched', 'yes', false)")
   |> pog.execute(connection)
 }
 
 fn read_the_setting(connection: pog.Connection) -> option.Option(String) {
   let assert Ok(pog.Returned(_, [value])) =
-    pog.query("select current_setting('pog.touched', true)")
+    pog.query("select current_setting('dream_pog.touched', true)")
     |> pog.returning(decode.at([0], decode.optional(decode.string)))
     |> pog.execute(connection)
   value

@@ -1,11 +1,11 @@
--module(pog_ffi).
+-module(dream_pog_ffi).
 
 -export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, get_pool_interceptor_safe/1, cleanup_checkout_interceptor/1, convert_error/1]).
 
--include_lib("pog/include/pog_Config.hrl").
+-include_lib("dream_pog/include/dream_pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
--define(INTERCEPTOR_TABLE, pog_interceptor_table).
+-define(INTERCEPTOR_TABLE, dream_pog_interceptor_table).
 
 ensure_interceptor_table() ->
     case ets:info(?INTERCEPTOR_TABLE) of
@@ -101,14 +101,14 @@ check_ca_file(Path) when is_binary(Path) ->
     {ok, Pem} ->
       case [Der || {'Certificate', Der, not_encrypted} <- pem_entries(Pem)] of
         [] ->
-          {error, <<"pog: the CA file ", Path/binary,
+          {error, <<"dream_pog: the CA file ", Path/binary,
                     " holds no PEM certificate">>};
         _ ->
           ok
       end;
     {error, Reason} ->
       {error, iolist_to_binary(io_lib:format(
-        "pog: the CA file ~ts cannot be read: ~p", [Path, Reason]))}
+        "dream_pog: the CA file ~ts cannot be read: ~p", [Path, Reason]))}
   end;
 check_ca_file(_) -> ok.
 
@@ -178,13 +178,13 @@ pool_options(Config) ->
 query(Pool, Sql, Arguments, Timeout) ->
     Res = case Pool of
         {single_connection, Conn} ->
-            pgo_handler:extended_query(Conn, Sql, Arguments, #{});
+            dream_pgo_handler:extended_query(Conn, Sql, Arguments, #{});
         {pool, Name} ->
             Options = #{
                 pool => Name,
                 pool_options => [{timeout, Timeout}]
             },
-            pgo:query(Sql, Arguments, Options)
+            dream_pgo:query(Sql, Arguments, Options)
     end,
     case Res of
         #{rows := Rows, num_rows := NumRows} ->
@@ -195,7 +195,7 @@ query(Pool, Sql, Arguments, Timeout) ->
     end.
 
 query_extended(Conn, Sql) ->
-    case pgo_handler:extended_query(Conn, Sql, [], #{queue_time => undefined}) of
+    case dream_pgo_handler:extended_query(Conn, Sql, [], #{queue_time => undefined}) of
         #{rows := Rows, num_rows := NumRows} ->
             {ok, {count(NumRows), Rows}};
 
@@ -213,11 +213,11 @@ count(_) ->
     0.
 
 checkout(Name) when is_atom(Name) ->
-    case pgo:checkout(Name) of
+    case dream_pgo:checkout(Name) of
         {ok, Ref, Conn} ->
             % Copy pool's interceptor to connection for transaction support
             case pool_interceptor(Name) of
-                {some, Interceptor} -> put({pog_conn_interceptor, Conn}, Interceptor);
+                {some, Interceptor} -> put({dream_pog_conn_interceptor, Conn}, Interceptor);
                 none -> ok
             end,
             {ok, {Ref, Conn}};
@@ -226,7 +226,7 @@ checkout(Name) when is_atom(Name) ->
 
 convert_error(none_available) ->
     connection_unavailable;
-convert_error({pgo_protocol, {parameters, Expected, Got}}) ->
+convert_error({dream_pgo_protocol, {parameters, Expected, Got}}) ->
     {unexpected_argument_count, Expected, Got};
 convert_error({pgsql_error, #{
     message := Message,
@@ -235,7 +235,7 @@ convert_error({pgsql_error, #{
 }}) ->
     {constraint_violated, Message, Constraint, Detail};
 convert_error({pgsql_error, #{code := Code, message := Message}}) ->
-    Constant = case pog:error_code_name(Code) of
+    Constant = case dream_pog:error_code_name(Code) of
         {ok, X} -> X;
         {error, nil} -> <<"unknown">>
     end,
@@ -247,10 +247,14 @@ convert_error(#{
 }) ->
     Got = list_to_binary(io_lib:format("~p", [Value])),
     {unexpected_argument_type, Expected, Got};
-convert_error(closed) ->
+%% dream_pgo gives query_timeout when the query ran past its deadline, and
+%% closed only when the connection closed for another cause.
+convert_error(query_timeout) ->
     query_timeout;
-%% Catch-all: pgo can emit shapes outside the documented set
-%% (e.g. {pgo_error, _}, {unexpected_message, _}, client_disconnected,
+convert_error(closed) ->
+    connection_unavailable;
+%% Catch-all: dream_pgo can emit shapes outside the documented set
+%% (e.g. {dream_pgo_error, _}, {unexpected_message, _}, client_disconnected,
 %% client_timeout, ssl_refused, {unimplemented, _}, etc.). Without this
 %% clause those shapes raise function_clause and crash the calling
 %% process, which can be a long-lived process of the application.
@@ -268,7 +272,7 @@ convert_error(closed) ->
 %% a raw Erlang term.
 convert_error(Other) ->
     logger:warning(#{
-        component => pog_convert_error,
+        component => dream_pog_convert_error,
         event => unhandled_driver_error,
         error_term => list_to_binary(io_lib:format("~p", [Other]))
     }),
@@ -292,7 +296,7 @@ claim_pool(PoolName, Interceptor, Options) ->
     Keeper = spawn(fun() -> keep_interceptor(PoolName, Starter) end),
     case ets:insert_new(?INTERCEPTOR_TABLE, {PoolName, Keeper, Interceptor}) of
         true ->
-            case pgo_pool:start_link(PoolName, Options) of
+            case dream_pgo_pool:start_link(PoolName, Options) of
                 {ok, Pool} = Started ->
                     Keeper ! {started, Pool},
                     Started;
@@ -373,7 +377,7 @@ get_pool_interceptor(Connection) ->
             pool_interceptor(Name);
         {single_connection, Conn} ->
             % For single connections (from transactions), lookup by connection handle
-            case get({pog_conn_interceptor, Conn}) of
+            case get({dream_pog_conn_interceptor, Conn}) of
                 undefined -> none;
                 Interceptor -> {some, Interceptor}
             end
@@ -389,5 +393,5 @@ get_pool_interceptor_safe(Connection) ->
 
 %% Cleanup interceptor reference when connection is checked back in
 cleanup_checkout_interceptor(Conn) ->
-    erase({pog_conn_interceptor, Conn}),
+    erase({dream_pog_conn_interceptor, Conn}),
     nil.

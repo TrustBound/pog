@@ -4,9 +4,9 @@
 #
 # The host ports are 5438 and 5439, so the tests do not use a PostgreSQL
 # server that already listens on 5432. Give the ports to the tests with the
-# environment variables PGPORT (5438) and POG_SSL_PGPORT (5439).
+# environment variables PGPORT (5438) and DREAM_POG_SSL_PGPORT (5439).
 
-name: pog
+name: dream_pog
 
 services:
   # The server for most tests. SSL is off.

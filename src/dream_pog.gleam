@@ -445,7 +445,7 @@ pub fn start(config: Config) -> actor.StartResult(Connection) {
   }
 }
 
-@external(erlang, "pog_ffi", "start")
+@external(erlang, "dream_pog_ffi", "start")
 fn start_tree(config: Config) -> Result(Pid, dynamic.Dynamic)
 
 /// Start a database connection pool by adding it to your supervision tree.
@@ -467,22 +467,22 @@ pub fn supervised(config: Config) -> supervision.ChildSpecification(Connection) 
 /// parameterised SQL query.
 pub type Value
 
-@external(erlang, "pog_ffi", "null")
+@external(erlang, "dream_pog_ffi", "null")
 pub fn null() -> Value
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 pub fn bool(a: Bool) -> Value
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 pub fn int(a: Int) -> Value
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 pub fn float(a: Float) -> Value
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 pub fn text(a: String) -> Value
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 pub fn bytea(a: BitArray) -> Value
 
 pub fn array(converter: fn(a) -> Value, values: List(a)) -> Value {
@@ -514,7 +514,7 @@ pub fn calendar_time_of_day(time: TimeOfDay) -> Value {
   coerce_value(#(time.hours, time.minutes, seconds))
 }
 
-@external(erlang, "pog_ffi", "coerce")
+@external(erlang, "dream_pog_ffi", "coerce")
 fn coerce_value(a: anything) -> Value
 
 pub type TransactionError(error) {
@@ -592,15 +592,15 @@ fn transaction_layer(
   }
 }
 
-@external(erlang, "pog_ffi", "checkout")
+@external(erlang, "dream_pog_ffi", "checkout")
 fn checkout(
   pool: Name(Message),
 ) -> Result(#(Reference, SingleConnection), QueryError)
 
-@external(erlang, "pog_ffi", "cleanup_checkout_interceptor")
+@external(erlang, "dream_pog_ffi", "cleanup_checkout_interceptor")
 fn cleanup_checkout_interceptor(conn: SingleConnection) -> Nil
 
-@external(erlang, "pgo", "checkin")
+@external(erlang, "dream_pgo", "checkin")
 fn do_checkin(ref: Reference, conn: SingleConnection) -> Dynamic
 
 fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic {
@@ -692,7 +692,7 @@ pub type InterceptResult {
   )
 }
 
-@external(erlang, "pog_ffi", "query")
+@external(erlang, "dream_pog_ffi", "query")
 fn run_query(
   a: Connection,
   b: String,
@@ -700,7 +700,7 @@ fn run_query(
   timeout: Int,
 ) -> Result(#(Int, List(Dynamic)), QueryError)
 
-@external(erlang, "pog_ffi", "query_extended")
+@external(erlang, "dream_pog_ffi", "query_extended")
 fn run_query_extended(
   connection: SingleConnection,
   query: String,
@@ -885,7 +885,7 @@ fn decode_intercepted_rows(
   Ok(Returned(count, decoded))
 }
 
-@external(erlang, "pog_ffi", "get_pool_interceptor")
+@external(erlang, "dream_pog_ffi", "get_pool_interceptor")
 fn get_pool_interceptor(pool: Connection) -> Option(Interceptor)
 
 /// Get the name for a PostgreSQL error code.
