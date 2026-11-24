@@ -1,6 +1,6 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, convert_error/1]).
+-export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, convert_error/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
@@ -33,14 +33,81 @@ default_ssl_options(Host, Ssl) ->
       {customize_hostname_check, [
         {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
       ]}
+    ]};
+    {ssl_verified_ca_file, Path} -> {true, [
+      {verify, verify_peer},
+      {cacertfile, binary_to_list(Path)},
+      {server_name_indication, binary_to_list(Host)},
+      {customize_hostname_check, [
+        {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+      ]}
+    ]};
+    ssl_verified_chain_only -> {true, [
+      {verify, verify_peer},
+      {cacerts, public_key:cacerts_get()},
+      {server_name_indication, binary_to_list(Host)},
+      {verify_fun, {fun verify_chain_only/3, nil}}
+    ]};
+    {ssl_verified_chain_only_ca_file, Path} -> {true, [
+      {verify, verify_peer},
+      {cacertfile, binary_to_list(Path)},
+      {server_name_indication, binary_to_list(Host)},
+      {verify_fun, {fun verify_chain_only/3, nil}}
     ]}
   end.
 
+%% The `verify_fun` of the chain-only modes (`verify-ca` of libpq). It is the
+%% default `verify_fun` of the ssl application, except that a host name that
+%% does not match the certificate is accepted. Every other check of the
+%% certificate chain stays.
+verify_chain_only(_Cert, {bad_cert, hostname_check_failed}, State) ->
+  {valid, State};
+verify_chain_only(_Cert, {bad_cert, _} = Reason, _State) ->
+  {fail, Reason};
+verify_chain_only(_Cert, {extension, _}, State) ->
+  {unknown, State};
+verify_chain_only(_Cert, valid, State) ->
+  {valid, State};
+verify_chain_only(_Cert, valid_peer, State) ->
+  {valid, State}.
+
+%% A CA file is read when the pool starts, so that a file that is missing or
+%% holds no certificate is an error of `start`, not a connection that fails
+%% again and again later.
+check_ca_file({ssl_verified_ca_file, Path}) -> check_ca_file(Path);
+check_ca_file({ssl_verified_chain_only_ca_file, Path}) -> check_ca_file(Path);
+check_ca_file(Path) when is_binary(Path) ->
+  case file:read_file(Path) of
+    {ok, Pem} ->
+      case [Der || {'Certificate', Der, not_encrypted} <- pem_entries(Pem)] of
+        [] ->
+          {error, <<"pog: the CA file ", Path/binary,
+                    " holds no PEM certificate">>};
+        _ ->
+          ok
+      end;
+    {error, Reason} ->
+      {error, iolist_to_binary(io_lib:format(
+        "pog: the CA file ~ts cannot be read: ~p", [Path, Reason]))}
+  end;
+check_ca_file(_) -> ok.
+
+pem_entries(Pem) ->
+  try public_key:pem_decode(Pem) catch _:_ -> [] end.
+
 start(Config) ->
+    case pool_options(Config) of
+        {ok, Options} ->
+            #config{pool_name = PoolName} = Config,
+            pgo_pool:start_link(PoolName, Options);
+        {error, _} = Error ->
+            Error
+    end.
+
+pool_options(Config) ->
     % Unfortunately this has to be supplied via global mutable state currently.
     application:set_env(pg_types, timestamp_config, integer_system_time_microseconds),
     #config{
-        pool_name = PoolName,
         host = Host,
         port = Port,
         database = Database,
@@ -56,31 +123,36 @@ start(Config) ->
         ip_version = IpVersion,
         rows_as_map = RowsAsMap
     } = Config,
-    {SslActivated, SslOptions} = default_ssl_options(Host, Ssl),
-    Options1 = #{
-        host => Host,
-        port => Port,
-        database => Database,
-        user => User,
-        ssl => SslActivated,
-        ssl_options => SslOptions,
-        connection_parameters => ConnectionParameters,
-        pool_size => PoolSize,
-        queue_target => QueueTarget,
-        queue_interval => QueueInterval,
-        idle_interval => IdleInterval,
-        trace => Trace,
-        decode_opts => [{return_rows_as_maps, RowsAsMap}],
-        socket_options => case IpVersion of
-            ipv4 -> [];
-            ipv6 -> [inet6]
-        end
-    },
-    Options2 = case Password of
-        {some, Pw} -> maps:put(password, Pw, Options1);
-        none -> Options1
-    end,
-    pgo_pool:start_link(PoolName, Options2).
+    case check_ca_file(Ssl) of
+        ok ->
+            {SslActivated, SslOptions} = default_ssl_options(Host, Ssl),
+            Options1 = #{
+                host => Host,
+                port => Port,
+                database => Database,
+                user => User,
+                ssl => SslActivated,
+                ssl_options => SslOptions,
+                connection_parameters => ConnectionParameters,
+                pool_size => PoolSize,
+                queue_target => QueueTarget,
+                queue_interval => QueueInterval,
+                idle_interval => IdleInterval,
+                trace => Trace,
+                decode_opts => [{return_rows_as_maps, RowsAsMap}],
+                socket_options => case IpVersion of
+                    ipv4 -> [];
+                    ipv6 -> [inet6]
+                end
+            },
+            Options2 = case Password of
+                {some, Pw} -> maps:put(password, Pw, Options1);
+                none -> Options1
+            end,
+            {ok, Options2};
+        {error, _} = Error ->
+            Error
+    end.
 
 query(Pool, Sql, Arguments, Timeout) ->
     Res = case Pool of

@@ -94,6 +94,23 @@ pub type Ssl {
   /// Never ignore CA certificate checking _unless you know exactly what you are
   /// doing_.
   SslVerified
+  /// Like `SslVerified`, but the CA certificates come from the PEM file at
+  /// `path`, not from the operating system. Use it for a database with a
+  /// private certificate authority. The file applies to this pool only.
+  ///
+  /// `start` fails when the file cannot be read or holds no PEM certificate.
+  SslVerifiedCaFile(path: String)
+  /// Enable SSL connection, and check the certificate chain against the CA
+  /// certificates of the operating system, but not the host name in the
+  /// certificate. It is `sslmode=verify-ca` of libpq. Use it when you connect
+  /// with a name or an address that the certificate does not hold.
+  SslVerifiedChainOnly
+  /// Like `SslVerifiedChainOnly`, but the CA certificates come from the PEM
+  /// file at `path`, not from the operating system. The file applies to this
+  /// pool only.
+  ///
+  /// `start` fails when the file cannot be read or holds no PEM certificate.
+  SslVerifiedChainOnlyCaFile(path: String)
   /// Enable SSL connection, but don't check CA certificate.
   /// `SslVerified` should always be prioritized upon `SslUnverified`.
   /// As it implies, that option enables SSL, but as it is unverified, the
@@ -298,27 +315,43 @@ fn extract_user_password(
   }
 }
 
-/// Expects `sslmode` to be `require`, `verify-ca`, `verify-full` or `disable`.
+/// Reads `sslmode` and `sslrootcert` from the query of the URL, with the
+/// meaning that libpq gives them.
 ///
-/// If `sslmode` is set, but not one of those value, fails.
+/// | sslmode       | without `sslrootcert`  | `sslrootcert=<path>`               |
+/// |---------------|------------------------|------------------------------------|
+/// | `disable`     | `SslDisabled`          | `SslDisabled` (the file is unused) |
+/// | `require`     | `SslUnverified`        | `SslVerifiedChainOnlyCaFile(path)` |
+/// | `verify-ca`   | `SslVerifiedChainOnly` | `SslVerifiedChainOnlyCaFile(path)` |
+/// | `verify-full` | `SslVerified`          | `SslVerifiedCaFile(path)`          |
 ///
-/// If `sslmode` is `verify-ca` or `verify-full`, returns `SslVerified`.
+/// `sslrootcert=system` selects the CA certificates of the system. With it,
+/// `sslmode` must be `verify-full` or absent, as in libpq: the result is
+/// `SslVerified`.
 ///
-/// If `sslmode` is `require`, returns `SslUnverified`.
-///
-/// If `sslmode` is unset, returns `SslDisabled`.
+/// Without a query, returns `SslDisabled`. With a query, but without
+/// `sslmode` (and without `sslrootcert=system`), or with another `sslmode`,
+/// fails.
 ///
 fn extract_ssl_mode(query: option.Option(String)) -> Result(Ssl, Nil) {
   case query {
     option.None -> Ok(SslDisabled)
     option.Some(query) -> {
       use query <- result.try(uri.parse_query(query))
-      use sslmode <- result.try(list.key_find(query, "sslmode"))
-      case sslmode {
-        "require" -> Ok(SslUnverified)
-        "verify-ca" | "verify-full" -> Ok(SslVerified)
-        "disable" -> Ok(SslDisabled)
-        _ -> Error(Nil)
+      let sslmode = list.key_find(query, "sslmode")
+      let sslrootcert = list.key_find(query, "sslrootcert")
+      case sslmode, sslrootcert {
+        Ok("verify-full"), Ok("system") | Error(Nil), Ok("system") ->
+          Ok(SslVerified)
+        _, Ok("system") -> Error(Nil)
+        Ok("disable"), _ -> Ok(SslDisabled)
+        Ok("require"), Error(Nil) -> Ok(SslUnverified)
+        Ok("require"), Ok(path) -> Ok(SslVerifiedChainOnlyCaFile(path))
+        Ok("verify-ca"), Error(Nil) -> Ok(SslVerifiedChainOnly)
+        Ok("verify-ca"), Ok(path) -> Ok(SslVerifiedChainOnlyCaFile(path))
+        Ok("verify-full"), Error(Nil) -> Ok(SslVerified)
+        Ok("verify-full"), Ok(path) -> Ok(SslVerifiedCaFile(path))
+        _, _ -> Error(Nil)
       }
     }
   }
@@ -332,6 +365,11 @@ fn extract_ssl_mode(query: option.Option(String)) -> Result(Ssl, Nil) {
 /// PostgreSQL instance specified in the config. If the configuration is invalid
 /// or it cannot connect for another reason it will continue to attempt to
 /// connect, and any queries made using the connection pool will fail.
+///
+/// An exception: with `SslVerifiedCaFile` or `SslVerifiedChainOnlyCaFile`,
+/// `start` reads the CA file first, and returns an error at once when the
+/// file cannot be read or holds no PEM certificate. The error reason is a
+/// `String` that names the file.
 ///
 pub fn start(config: Config) -> actor.StartResult(Connection) {
   case start_tree(config) {

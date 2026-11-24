@@ -99,6 +99,72 @@ pub fn url_config_path_slash_test() {
     == Error(Nil)
 }
 
+fn url_ssl(query: String) -> Result(pog.Ssl, Nil) {
+  let name = process.new_name("pog_test")
+  case pog.url_config(name, "postgres://u:p@db.test:1234/my_db?" <> query) {
+    Ok(config) -> Ok(config.ssl)
+    Error(Nil) -> Error(Nil)
+  }
+}
+
+pub fn url_config_sslmode_disable_test() {
+  assert url_ssl("sslmode=disable") == Ok(pog.SslDisabled)
+}
+
+pub fn url_config_sslmode_require_test() {
+  assert url_ssl("sslmode=require") == Ok(pog.SslUnverified)
+}
+
+pub fn url_config_sslmode_verify_ca_checks_the_chain_only_test() {
+  assert url_ssl("sslmode=verify-ca") == Ok(pog.SslVerifiedChainOnly)
+}
+
+pub fn url_config_sslmode_verify_full_test() {
+  assert url_ssl("sslmode=verify-full") == Ok(pog.SslVerified)
+}
+
+pub fn url_config_sslrootcert_with_verify_full_test() {
+  assert url_ssl("sslmode=verify-full&sslrootcert=/certs/ca.crt")
+    == Ok(pog.SslVerifiedCaFile("/certs/ca.crt"))
+}
+
+pub fn url_config_sslrootcert_with_verify_ca_test() {
+  assert url_ssl("sslrootcert=/certs/ca.crt&sslmode=verify-ca")
+    == Ok(pog.SslVerifiedChainOnlyCaFile("/certs/ca.crt"))
+}
+
+pub fn url_config_sslrootcert_is_percent_decoded_test() {
+  assert url_ssl("sslmode=verify-full&sslrootcert=%2Fmy%20certs%2Fca.crt")
+    == Ok(pog.SslVerifiedCaFile("/my certs/ca.crt"))
+}
+
+// libpq: with a root certificate file, `require` behaves like `verify-ca`.
+pub fn url_config_sslrootcert_with_require_checks_the_chain_test() {
+  assert url_ssl("sslmode=require&sslrootcert=/certs/ca.crt")
+    == Ok(pog.SslVerifiedChainOnlyCaFile("/certs/ca.crt"))
+}
+
+// libpq: without SSL, the root certificate file is not used.
+pub fn url_config_sslrootcert_with_disable_test() {
+  assert url_ssl("sslmode=disable&sslrootcert=/certs/ca.crt")
+    == Ok(pog.SslDisabled)
+}
+
+// libpq: `sslrootcert=system` uses the trusted CAs of the system, its
+// default sslmode is `verify-full`, and a weaker sslmode is an error.
+pub fn url_config_sslrootcert_system_test() {
+  assert url_ssl("sslmode=verify-full&sslrootcert=system")
+    == Ok(pog.SslVerified)
+  assert url_ssl("sslrootcert=system") == Ok(pog.SslVerified)
+  assert url_ssl("sslmode=verify-ca&sslrootcert=system") == Error(Nil)
+  assert url_ssl("sslmode=require&sslrootcert=system") == Error(Nil)
+  assert url_ssl("sslmode=disable&sslrootcert=system") == Error(Nil)
+}
+
+pub fn url_config_unknown_sslmode_test() {
+  assert url_ssl("sslmode=prefer") == Error(Nil)
+}
+
 pub fn inserting_new_rows_test() {
   let db = start_default()
   let sql =

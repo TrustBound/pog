@@ -46,6 +46,83 @@ grab the certificate and handle it in your application code, `pog` will
 read the certificates from your OS, using Erlang function
 `public_key:cacerts_get()`.
 
+#### Giving a CA file to one pool
+
+`pog` can also read the CA certificates from a PEM file, for one pool
+only. Use this for a database with a private certificate authority, when you do
+not want to change the certificate list of the OS:
+
+```gleam
+import pog
+
+pog.default_config(pool_name)
+|> pog.host("db.internal.example.com")
+|> pog.ssl(pog.SslVerifiedCaFile(path: "/etc/my-app/db-ca.pem"))
+```
+
+The pool uses only the certificates of the file, not the list of the OS. Other
+pools and the rest of the VM do not see the file. `pog.start` reads the file
+first. If the file is missing, or if it holds no PEM certificate, `pog.start`
+returns an error at once, and the error names the file. The pool does not start.
+
+#### Verifying the chain but not the host name
+
+`SslVerified` and `SslVerifiedCaFile` make sure of two things: a known
+certificate authority signed the server certificate, and the host name of the
+config is a name in the certificate. This is `sslmode=verify-full` of libpq.
+
+Sometimes you connect with a name or an address that the certificate does not
+hold, for example `127.0.0.1` when the certificate holds only `localhost`. Then
+the connection fails with `hostname_check_failed`. For this case, use
+`SslVerifiedChainOnly` (the OS list) or `SslVerifiedChainOnlyCaFile` (a CA
+file). These modes make sure of the certificate chain, but not of the host
+name. This is `sslmode=verify-ca` of libpq:
+
+```gleam
+pog.default_config(pool_name)
+|> pog.host("127.0.0.1")
+|> pog.ssl(pog.SslVerifiedChainOnlyCaFile(path: "/etc/my-app/db-ca.pem"))
+```
+
+A server certificate from an unknown certificate authority still fails with
+`unknown_ca` in these modes. Use the host name modes when you can.
+
+#### SSL settings in a connection URL
+
+`url_config` reads `sslmode` and `sslrootcert` with the meaning that libpq
+gives them:
+
+| URL query                                     | `Ssl` value                         |
+|-----------------------------------------------|-------------------------------------|
+| no query                                      | `SslDisabled`                       |
+| `sslmode=disable`                             | `SslDisabled`                       |
+| `sslmode=require`                             | `SslUnverified`                     |
+| `sslmode=require&sslrootcert=<path>`          | `SslVerifiedChainOnlyCaFile(path)`  |
+| `sslmode=verify-ca`                           | `SslVerifiedChainOnly`              |
+| `sslmode=verify-ca&sslrootcert=<path>`        | `SslVerifiedChainOnlyCaFile(path)`  |
+| `sslmode=verify-full`                         | `SslVerified`                       |
+| `sslmode=verify-full&sslrootcert=<path>`      | `SslVerifiedCaFile(path)`           |
+| `sslrootcert=system` (with or without `sslmode=verify-full`) | `SslVerified`        |
+
+What each mode does:
+
+- `disable`: no SSL. A `sslrootcert` file is not used.
+- `require`: SSL, but no check of the server certificate. With
+  `sslrootcert=<path>`, libpq checks the certificate chain, as `verify-ca`
+  does. `url_config` does the same.
+- `verify-ca`: SSL, and the certificate chain must lead to a known
+  certificate authority. The host name is not checked.
+- `verify-full`: SSL, the certificate chain must lead to a known certificate
+  authority, and the host name of the URL must be a name in the certificate.
+
+`sslrootcert=<path>` gives the CA certificates of the PEM file at `path`
+(percent-encoded in the URL). Without `sslrootcert`, the modes use the CA
+certificates of the OS. libpq uses `~/.postgresql/root.crt` in that case;
+`pog` does not read that file. `sslrootcert=system` selects the CA
+certificates of the OS. libpq refuses every `sslmode` other than
+`verify-full` with it, and so does `url_config`. Any other `sslmode` value
+(`allow`, `prefer`), or a query without `sslmode`, makes `url_config` fail.
+
 #### Adding the custom CA certificate in your OS certificate chain
 
 Adding the CA certificate depends on your OS:

@@ -170,7 +170,9 @@ In Postgres, conventions used, including in connection URI are as follow:
 - Flag used to indicate SSL state is named `sslmode`.
 - `disable` disables SSL connection.
 - `require` enables SSL connection, but does not check CA certificates.
-- `verify-ca` or `verify-full` enables SSL connection, and check for CA certificates.
+- `verify-ca` enables SSL connection, and checks the certificate chain, but not the host name.
+- `verify-full` enables SSL connection, and checks the certificate chain and the host name.
+- `sslrootcert=<path>` gives the file of CA certificates. With `require`, it makes libpq check the certificate chain, as `verify-ca` does.
 
 ### `pog` SSL usage
 
@@ -179,6 +181,27 @@ in `pog.Config`. The different options are `SslDisabled`, `SslUnverified` &
 `SslVerified`. Because of the nature of the 3 modes of SSL, and because talking
 to your database should be highly secured to protect you against man-in-the-middle
 attacks, you should always try to use the most secured setting.
+
+There are three more settings. `SslVerifiedCaFile(path)` reads the CA
+certificates for one pool from a PEM file. `SslVerifiedChainOnly` and
+`SslVerifiedChainOnlyCaFile(path)` make sure of the certificate chain but not
+of the host name, as `verify-ca` of libpq does. `url_config` maps the URL
+settings to these values:
+
+| URL query                                     | `Ssl` value                         |
+|-----------------------------------------------|-------------------------------------|
+| no query                                      | `SslDisabled`                       |
+| `sslmode=disable`                             | `SslDisabled`                       |
+| `sslmode=require`                             | `SslUnverified`                     |
+| `sslmode=require&sslrootcert=<path>`          | `SslVerifiedChainOnlyCaFile(path)`  |
+| `sslmode=verify-ca`                           | `SslVerifiedChainOnly`              |
+| `sslmode=verify-ca&sslrootcert=<path>`        | `SslVerifiedChainOnlyCaFile(path)`  |
+| `sslmode=verify-full`                         | `SslVerified`                       |
+| `sslmode=verify-full&sslrootcert=<path>`      | `SslVerifiedCaFile(path)`           |
+| `sslrootcert=system` (with or without `sslmode=verify-full`) | `SslVerified`        |
+
+Refer to [Solving SSL issues](https://hexdocs.pm/pog/docs/solving-ssl-issues.html)
+for what each mode does.
 
 ### Need some help?
 

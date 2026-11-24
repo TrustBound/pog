@@ -4,6 +4,19 @@
 
 - A driver error with an unknown shape now gives `ConnectionUnavailable` and a
   `logger` warning. Before, it crashed the calling process.
+- Added the `SslVerifiedCaFile(path)` SSL setting. It reads the CA
+  certificates for one pool from a PEM file, not from the operating system.
+  `start` returns an error when the file cannot be read or holds no PEM
+  certificate.
+- Added the `SslVerifiedChainOnly` and `SslVerifiedChainOnlyCaFile(path)` SSL
+  settings. They make sure of the certificate chain but not of the host name,
+  as `sslmode=verify-ca` of libpq does.
+- `url_config` now gives `SslVerifiedChainOnly` for `sslmode=verify-ca`
+  (before: `SslVerified`, which also checked the host name), and reads
+  `sslrootcert`: `sslrootcert=<path>` selects `SslVerifiedCaFile(path)` or
+  `SslVerifiedChainOnlyCaFile(path)`, and with `sslmode=require` it checks the
+  certificate chain, as libpq does. `sslrootcert=system` is accepted only with
+  `sslmode=verify-full` or without `sslmode`.
 - `Returned.count` is always an `Int`. A command without a row count, such
   as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
   count was an atom such as `table` or `nil`.

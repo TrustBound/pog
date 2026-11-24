@@ -10,8 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # container: ubuntu:20.04
-    # The PostgreSQL server comes from docker-compose.yml, not from a service
-    # container, so the tests use the same server in CI and on a laptop.
+    # The PostgreSQL servers come from docker-compose.yml, not from a service
+    # container: the SSL server needs the certificates of test/fixtures/ssl,
+    # and a service container starts before the checkout.
     steps:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
@@ -34,4 +35,5 @@ jobs:
       - run: gleam test
         env:
           PGPORT: 5438
+          POG_SSL_PGPORT: 5439
       - run: gleam format --check src test
