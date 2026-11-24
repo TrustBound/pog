@@ -1,11 +1,5 @@
-# TODO before release: replace the path dependency
-# `dream_postgres_driver = { path = "../dream_pgo" }` with a Hex version range
-# after dream_postgres_driver is published. Hex packages must not have path or
-# git dependencies. The path dependency needs a dream_postgres_driver checkout
-# in the folder ../dream_pgo, next to this one; its gleam.toml lets Gleam
-# build it.
 name = "dream_postgres_client"
-version = "4.1.0"
+version = "1.0.0"
 gleam = ">= 1.11.0"
 licences = ["Apache-2.0"]
 description = "A fork of pog, the PostgreSQL database client for Gleam, that uses the dream_postgres_driver driver"
@@ -29,7 +23,7 @@ gleam_otp = ">= 1.0.0 and < 2.0.0"
 gleam_stdlib = ">= 0.51.0 and < 2.0.0"
 gleam_time = ">= 1.0.0 and < 2.0.0"
 exception = ">= 2.1.0 and < 3.0.0"
-dream_postgres_driver = { path = "../dream_pgo" }
+dream_postgres_driver = ">= 1.0.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

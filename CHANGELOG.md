@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0 - 2026-11-24
 
 The first release of `dream_postgres_client`, a fork of pog v4.1.0.
 
