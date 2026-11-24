@@ -20,6 +20,9 @@
 - `Returned.count` is always an `Int`. A command without a row count, such
   as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
   count was an atom such as `table` or `nil`.
+- `url_config` uses the last value of a setting that occurs more than once,
+  as libpq does. Before, `?sslmode=disable&sslmode=require` gave
+  `SslDisabled`.
 
 ## v4.1.0 - 2025-07-14
 

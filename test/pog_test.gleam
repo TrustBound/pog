@@ -165,6 +165,33 @@ pub fn url_config_unknown_sslmode_test() {
   assert url_ssl("sslmode=prefer") == Error(Nil)
 }
 
+// libpq: when a setting occurs more than one time, the last value is used.
+pub fn url_config_repeated_setting_takes_the_last_test() {
+  let name = process.new_name("pog_test")
+  let expected =
+    pog.default_config(name)
+    |> pog.host("db.test")
+    |> pog.port(1234)
+    |> pog.database("my_db")
+    |> pog.user("u")
+    |> pog.password(Some("p"))
+  assert pog.url_config(
+      name,
+      "postgres://u:p@db.test:1234/my_db?sslmode=disable&sslmode=require",
+    )
+    == Ok(pog.Config(..expected, ssl: pog.SslUnverified))
+  assert pog.url_config(
+      name,
+      "postgres://u:p@db.test:1234/my_db?sslmode=require&sslmode=disable",
+    )
+    == Ok(pog.Config(..expected, ssl: pog.SslDisabled))
+  assert pog.url_config(
+      name,
+      "postgres://u:p@db.test:1234/my_db?sslmode=verify-full&sslrootcert=/a.crt&sslrootcert=/b.crt",
+    )
+    == Ok(pog.Config(..expected, ssl: pog.SslVerifiedCaFile("/b.crt")))
+}
+
 pub fn inserting_new_rows_test() {
   let db = start_default()
   let sql =

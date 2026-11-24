@@ -338,6 +338,8 @@ fn extract_ssl_mode(query: option.Option(String)) -> Result(Ssl, Nil) {
     option.None -> Ok(SslDisabled)
     option.Some(query) -> {
       use query <- result.try(uri.parse_query(query))
+      // libpq uses the last value of a setting that occurs more than once.
+      let query = list.reverse(query)
       let sslmode = list.key_find(query, "sslmode")
       let sslrootcert = list.key_find(query, "sslrootcert")
       case sslmode, sslrootcert {
