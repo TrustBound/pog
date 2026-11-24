@@ -2,7 +2,7 @@
 //// `docker-compose.yml`: its certificate has the test certificate authority
 //// of `test/fixtures/ssl` as issuer, and its only name is `localhost`.
 
-import dream_pog as pog
+import dream_postgres_client as pog
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -13,20 +13,20 @@ import gleam/string
 
 const ca_file = "test/fixtures/ssl/ca.crt"
 
-@external(erlang, "dream_pog_test_ffi", "env_port")
+@external(erlang, "dream_postgres_client_test_ffi", "env_port")
 fn env_port(name: String, default: Int) -> Int
 
-@external(erlang, "dream_pog_test_ffi", "ssl_probe")
+@external(erlang, "dream_postgres_client_test_ffi", "ssl_probe")
 fn ssl_probe(config: pog.Config) -> Result(Nil, String)
 
-@external(erlang, "dream_pog_test_ffi", "system_cacerts")
+@external(erlang, "dream_postgres_client_test_ffi", "system_cacerts")
 fn system_cacerts() -> Dynamic
 
 fn ssl_config(host: String, ssl: pog.Ssl) -> pog.Config {
-  process.new_name("dream_pog_ssl_test")
+  process.new_name("dream_postgres_client_ssl_test")
   |> pog.default_config
   |> pog.host(host)
-  |> pog.port(env_port("DREAM_POG_SSL_PGPORT", 5439))
+  |> pog.port(env_port("DREAM_POSTGRES_CLIENT_SSL_PGPORT", 5439))
   |> pog.password(Some("postgres"))
   |> pog.pool_size(1)
   |> pog.ssl(ssl)
@@ -124,7 +124,7 @@ pub fn ca_file_does_not_change_the_system_list_test() {
 }
 
 fn url_ssl_config(host: String, query: String) -> pog.Config {
-  let port = env_port("DREAM_POG_SSL_PGPORT", 5439)
+  let port = env_port("DREAM_POSTGRES_CLIENT_SSL_PGPORT", 5439)
   let url =
     "postgres://postgres:postgres@"
     <> host
@@ -133,7 +133,7 @@ fn url_ssl_config(host: String, query: String) -> pog.Config {
     <> "/postgres?"
     <> query
   let assert Ok(config) =
-    pog.url_config(process.new_name("dream_pog_ssl_test"), url)
+    pog.url_config(process.new_name("dream_postgres_client_ssl_test"), url)
   pog.pool_size(config, 1)
 }
 

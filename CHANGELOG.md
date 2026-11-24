@@ -2,20 +2,20 @@
 
 ## Unreleased
 
-The first release of `dream_pog`, a fork of pog v4.1.0.
+The first release of `dream_postgres_client`, a fork of pog v4.1.0.
 
 - The package, the Gleam module and the Erlang module have new names:
-  `dream_pog` and `dream_pog_ffi`. The logger component has the `dream_pog`
+  `dream_postgres_client` and `dream_postgres_client_ffi`. The logger component has the `dream_postgres_client`
   prefix. To move from pog, use
-  `import dream_pog as pog`.
-- The driver is `dream_pgo`, a fork of pgo v0.20.0, not `pgo`.
+  `import dream_postgres_client as pog`.
+- The driver is `dream_postgres_driver`, a fork of pgo v0.20.0, not `pgo`.
 - A caller's `application_name` connection parameter now reaches the server
-  (a fix in `dream_pgo`).
+  (a fix in `dream_postgres_driver`).
 - Added a query interceptor: `interceptor`, `disconnected`, and the
   `Interceptor`, `InterceptRequest` and `InterceptResult` types. A pool
   without an interceptor does not use the interceptor of an earlier pool with
   the same name.
-- The interceptor is in the pool. `start` gives it to the `dream_pgo` pool
+- The interceptor is in the pool. `start` gives it to the `dream_postgres_driver` pool
   as the `extra` setting, and the pool keeps it with each connection. A query
   checks out a connection and reads the interceptor from it: `Continue` and
   `Capture` run the query on that connection, and `Respond` and `Fail` give
@@ -46,7 +46,7 @@ The first release of `dream_pog`, a fork of pog v4.1.0.
 - `Returned.count` is always an `Int`. A command without a row count, such
   as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
   count was an atom such as `table` or `nil`.
-- A query that runs past its timeout gives `QueryTimeout`: `dream_pgo` now
+- A query that runs past its timeout gives `QueryTimeout`: `dream_postgres_driver` now
   gives `query_timeout` for it. A connection that closes for another cause
   gives `ConnectionUnavailable`. Before, every closed connection gave
   `QueryTimeout`.

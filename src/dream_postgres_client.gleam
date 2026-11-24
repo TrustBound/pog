@@ -445,7 +445,7 @@ pub fn start(config: Config) -> actor.StartResult(Connection) {
   }
 }
 
-@external(erlang, "dream_pog_ffi", "start")
+@external(erlang, "dream_postgres_client_ffi", "start")
 fn start_tree(config: Config) -> Result(Pid, dynamic.Dynamic)
 
 /// Start a database connection pool by adding it to your supervision tree.
@@ -467,22 +467,22 @@ pub fn supervised(config: Config) -> supervision.ChildSpecification(Connection) 
 /// parameterised SQL query.
 pub type Value
 
-@external(erlang, "dream_pog_ffi", "null")
+@external(erlang, "dream_postgres_client_ffi", "null")
 pub fn null() -> Value
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn bool(a: Bool) -> Value
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn int(a: Int) -> Value
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn float(a: Float) -> Value
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn text(a: String) -> Value
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn bytea(a: BitArray) -> Value
 
 pub fn array(converter: fn(a) -> Value, values: List(a)) -> Value {
@@ -514,7 +514,7 @@ pub fn calendar_time_of_day(time: TimeOfDay) -> Value {
   coerce_value(#(time.hours, time.minutes, seconds))
 }
 
-@external(erlang, "dream_pog_ffi", "coerce")
+@external(erlang, "dream_postgres_client_ffi", "coerce")
 fn coerce_value(a: anything) -> Value
 
 pub type TransactionError(error) {
@@ -592,19 +592,19 @@ fn transaction_layer(
   }
 }
 
-@external(erlang, "dream_pog_ffi", "checkout")
+@external(erlang, "dream_postgres_client_ffi", "checkout")
 fn checkout(
   pool: Name(Message),
 ) -> Result(#(Reference, SingleConnection), QueryError)
 
 /// Checks out a connection for one query, with the timeout of the query.
-@external(erlang, "dream_pog_ffi", "checkout")
+@external(erlang, "dream_postgres_client_ffi", "checkout")
 fn checkout_for_query(
   pool: Name(Message),
   timeout: Int,
 ) -> Result(#(Reference, SingleConnection), QueryError)
 
-@external(erlang, "dream_pgo", "checkin")
+@external(erlang, "dream_postgres_driver", "checkin")
 fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic
 
 pub fn nullable(inner_type: fn(a) -> Value, value: Option(a)) -> Value {
@@ -691,7 +691,7 @@ pub type InterceptResult {
   )
 }
 
-@external(erlang, "dream_pog_ffi", "query")
+@external(erlang, "dream_postgres_client_ffi", "query")
 fn run_query(
   a: Connection,
   b: String,
@@ -704,7 +704,7 @@ type CheckedOut {
   CheckedOut(ref: Reference, conn: SingleConnection)
 }
 
-@external(erlang, "dream_pog_ffi", "query")
+@external(erlang, "dream_postgres_client_ffi", "query")
 fn run_checked_out_query(
   a: CheckedOut,
   b: String,
@@ -712,7 +712,7 @@ fn run_checked_out_query(
   timeout: Int,
 ) -> Result(#(Int, List(Dynamic)), QueryError)
 
-@external(erlang, "dream_pog_ffi", "query_extended")
+@external(erlang, "dream_postgres_client_ffi", "query_extended")
 fn run_query_extended(
   connection: SingleConnection,
   query: String,
@@ -913,7 +913,7 @@ fn decode_intercepted_rows(
 }
 
 /// The interceptor of the pool of the connection.
-@external(erlang, "dream_pog_ffi", "interceptor")
+@external(erlang, "dream_postgres_client_ffi", "interceptor")
 fn connection_interceptor(conn: SingleConnection) -> Option(Interceptor)
 
 /// Get the name for a PostgreSQL error code.

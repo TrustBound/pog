@@ -12,11 +12,11 @@ export PGUSER="postgres"
 export PGHOST="localhost"
 export PGPASSWORD="postgres"
 export PGPORT=5438
-export DREAM_POG_SSL_PGPORT=5439
+export DREAM_POSTGRES_CLIENT_SSL_PGPORT=5439
 ./test/reset_db.sh
 gleam test
 docker compose down
 ```
 
-Without `PGPORT` the tests use port 5432, and without `DREAM_POG_SSL_PGPORT`
+Without `PGPORT` the tests use port 5432, and without `DREAM_POSTGRES_CLIENT_SSL_PGPORT`
 the SSL tests use port 5439.

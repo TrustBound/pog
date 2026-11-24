@@ -1,4 +1,4 @@
-import dream_pog as pog
+import dream_postgres_client as pog
 import exception
 import gleam/dynamic
 import gleam/dynamic/decode.{type Decoder}
@@ -28,7 +28,7 @@ fn start_default() -> actor.Started(pog.Connection) {
   started
 }
 
-@external(erlang, "dream_pog_test_ffi", "env_port")
+@external(erlang, "dream_postgres_client_test_ffi", "env_port")
 fn env_port(name: String, default: Int) -> Int
 
 fn default_config(name) {
@@ -833,13 +833,16 @@ pub fn application_name_connection_parameter_reaches_the_server_test() {
   let assert Ok(started) =
     process.new_name("pog_test")
     |> default_config
-    |> pog.connection_parameter("application_name", "dream_pog_name_test")
+    |> pog.connection_parameter(
+      "application_name",
+      "dream_postgres_client_name_test",
+    )
     |> pog.start
   let assert Ok(returned) =
     pog.query("select current_setting('application_name')")
     |> pog.returning(decode.at([0], decode.string))
     |> pog.execute(started.data)
-  assert returned.rows == ["dream_pog_name_test"]
+  assert returned.rows == ["dream_postgres_client_name_test"]
   disconnect(started)
 }
 
@@ -1212,14 +1215,14 @@ pub fn capture_ok_passes_a_database_error_in_a_transaction_test() {
   disconnect(db)
 }
 
-/// Fails the query that sets the session setting `dream_pog.touched`, and
+/// Fails the query that sets the session setting `dream_postgres_client.touched`, and
 /// lets every other query run. The pool has one connection, so a later query
 /// sees the setting only if the database ran the failed query.
 fn fail_the_setting_query() -> option.Option(pog.Interceptor) {
   Some(
     pog.Interceptor(fn(request) {
       case request.sql {
-        "select set_config('dream_pog.touched', 'yes', false)" ->
+        "select set_config('dream_postgres_client.touched', 'yes', false)" ->
           pog.Fail(pog.InterceptorFailed(interceptor_reason()))
         _ -> pog.Continue
       }
@@ -1230,13 +1233,13 @@ fn fail_the_setting_query() -> option.Option(pog.Interceptor) {
 fn set_the_setting(
   connection: pog.Connection,
 ) -> Result(pog.Returned(Nil), pog.QueryError) {
-  pog.query("select set_config('dream_pog.touched', 'yes', false)")
+  pog.query("select set_config('dream_postgres_client.touched', 'yes', false)")
   |> pog.execute(connection)
 }
 
 fn read_the_setting(connection: pog.Connection) -> option.Option(String) {
   let assert Ok(pog.Returned(_, [value])) =
-    pog.query("select current_setting('dream_pog.touched', true)")
+    pog.query("select current_setting('dream_postgres_client.touched', true)")
     |> pog.returning(decode.at([0], decode.optional(decode.string)))
     |> pog.execute(connection)
   value

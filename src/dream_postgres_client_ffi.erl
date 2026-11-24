@@ -1,8 +1,8 @@
--module(dream_pog_ffi).
+-module(dream_postgres_client_ffi).
 
 -export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, checkout/2, interceptor/1, convert_error/1]).
 
--include_lib("dream_pog/include/dream_pog_Config.hrl").
+-include_lib("dream_postgres_client/include/dream_postgres_client_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
 null() ->
@@ -81,14 +81,14 @@ check_ca_file(Path) when is_binary(Path) ->
     {ok, Pem} ->
       case [Der || {'Certificate', Der, not_encrypted} <- pem_entries(Pem)] of
         [] ->
-          {error, <<"dream_pog: the CA file ", Path/binary,
+          {error, <<"dream_postgres_client: the CA file ", Path/binary,
                     " holds no PEM certificate">>};
         _ ->
           ok
       end;
     {error, Reason} ->
       {error, iolist_to_binary(io_lib:format(
-        "dream_pog: the CA file ~ts cannot be read: ~p", [Path, Reason]))}
+        "dream_postgres_client: the CA file ~ts cannot be read: ~p", [Path, Reason]))}
   end;
 check_ca_file(_) -> ok.
 
@@ -100,7 +100,7 @@ start(Config) ->
         {ok, Options} ->
             #config{pool_name = PoolName, interceptor = Interceptor} = Config,
             % The pool keeps the interceptor with each connection.
-            dream_pgo_pool:start_link(PoolName, Options#{extra => Interceptor});
+            dream_postgres_driver_pool:start_link(PoolName, Options#{extra => Interceptor});
         {error, _} = Error ->
             Error
     end.
@@ -158,12 +158,12 @@ pool_options(Config) ->
 query(Pool, Sql, Arguments, _Timeout) ->
     Res = case Pool of
         {single_connection, Conn} ->
-            dream_pgo_handler:extended_query(Conn, Sql, Arguments, #{});
+            dream_postgres_driver_handler:extended_query(Conn, Sql, Arguments, #{});
         {checked_out, {_, _, _, Holder}, Conn} ->
-            % As dream_pgo:query/3 runs a query on a connection of the pool:
+            % As dream_postgres_driver:query/3 runs a query on a connection of the pool:
             % the pool removes the holder when the timeout of the checkout
             % passes.
-            case dream_pgo:query(Sql, Arguments, #{}, Conn) of
+            case dream_postgres_driver:query(Sql, Arguments, #{}, Conn) of
                 {error, Closed} when Closed =:= closed; Closed =:= einval ->
                     case ets:info(Holder, size) of
                         undefined -> {error, query_timeout};
@@ -182,7 +182,7 @@ query(Pool, Sql, Arguments, _Timeout) ->
     end.
 
 query_extended(Conn, Sql) ->
-    case dream_pgo_handler:extended_query(Conn, Sql, [], #{queue_time => undefined}) of
+    case dream_postgres_driver_handler:extended_query(Conn, Sql, [], #{queue_time => undefined}) of
         #{rows := Rows, num_rows := NumRows} ->
             {ok, {count(NumRows), Rows}};
 
@@ -200,20 +200,20 @@ count(_) ->
     0.
 
 checkout(Name) when is_atom(Name) ->
-    case dream_pgo:checkout(Name) of
+    case dream_postgres_driver:checkout(Name) of
         {ok, Ref, Conn} -> {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
 checkout(Name, Timeout) when is_atom(Name) ->
-    case dream_pgo:checkout(Name, [{timeout, Timeout}]) of
+    case dream_postgres_driver:checkout(Name, [{timeout, Timeout}]) of
         {ok, Ref, Conn} -> {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
 convert_error(none_available) ->
     connection_unavailable;
-convert_error({dream_pgo_protocol, {parameters, Expected, Got}}) ->
+convert_error({dream_postgres_driver_protocol, {parameters, Expected, Got}}) ->
     {unexpected_argument_count, Expected, Got};
 convert_error({pgsql_error, #{
     message := Message,
@@ -222,7 +222,7 @@ convert_error({pgsql_error, #{
 }}) ->
     {constraint_violated, Message, Constraint, Detail};
 convert_error({pgsql_error, #{code := Code, message := Message}}) ->
-    Constant = case dream_pog:error_code_name(Code) of
+    Constant = case dream_postgres_client:error_code_name(Code) of
         {ok, X} -> X;
         {error, nil} -> <<"unknown">>
     end,
@@ -234,14 +234,14 @@ convert_error(#{
 }) ->
     Got = list_to_binary(io_lib:format("~p", [Value])),
     {unexpected_argument_type, Expected, Got};
-%% dream_pgo gives query_timeout when the query ran past its deadline, and
+%% dream_postgres_driver gives query_timeout when the query ran past its deadline, and
 %% closed only when the connection closed for another cause.
 convert_error(query_timeout) ->
     query_timeout;
 convert_error(closed) ->
     connection_unavailable;
-%% Catch-all: dream_pgo can emit shapes outside the documented set
-%% (e.g. {dream_pgo_error, _}, {unexpected_message, _}, client_disconnected,
+%% Catch-all: dream_postgres_driver can emit shapes outside the documented set
+%% (e.g. {dream_postgres_driver_error, _}, {unexpected_message, _}, client_disconnected,
 %% client_timeout, ssl_refused, {unimplemented, _}, etc.). Without this
 %% clause those shapes raise function_clause and crash the calling
 %% process, which can be a long-lived process of the application.
@@ -259,7 +259,7 @@ convert_error(closed) ->
 %% a raw Erlang term.
 convert_error(Other) ->
     logger:warning(#{
-        component => dream_pog_convert_error,
+        component => dream_postgres_client_convert_error,
         event => unhandled_driver_error,
         error_term => list_to_binary(io_lib:format("~p", [Other]))
     }),
@@ -269,7 +269,7 @@ convert_error(Other) ->
 %% interceptor to the pool as its `extra` setting, and the pool keeps it with
 %% each connection.
 interceptor(Conn) ->
-    case dream_pgo:conn_extra(Conn) of
+    case dream_postgres_driver:conn_extra(Conn) of
         {some, _} = Interceptor -> Interceptor;
         _ -> none
     end.
