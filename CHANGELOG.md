@@ -11,6 +11,11 @@
   first query after a start uses the interceptor. When the pool stops, its
   interceptor is removed. Two starts of the same name at the same time do not
   race: one fails.
+- Added the `InterceptorFailed(reason: Dynamic)` query error. An interceptor
+  fails a query with it: before the query runs with
+  `Fail(InterceptorFailed(reason))`, and after the query runs when the
+  `on_result` function of `Capture` returns `Error(reason)`. `on_result`
+  returns `Result(Nil, Dynamic)`. `Ok(Nil)` gives the result of the database.
 - A driver error with an unknown shape now gives `ConnectionUnavailable` and a
   `logger` warning. Before, it crashed the calling process.
 - Added the `SslVerifiedCaFile(path)` SSL setting. It reads the CA

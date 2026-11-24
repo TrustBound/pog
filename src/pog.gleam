@@ -668,10 +668,28 @@ pub type InterceptResult {
   /// Return data without querying the database
   Respond(count: Int, rows: List(Dynamic))
   /// Return an error without querying the database.
+  ///
+  /// To fail the query with a reason of its own, an interceptor gives
+  /// `InterceptorFailed`:
+  ///
+  /// ```gleam
+  /// let read_only = Interceptor(fn(request) {
+  ///   case string.starts_with(request.sql, "SELECT") {
+  ///     True -> Continue
+  ///     False -> Fail(InterceptorFailed(dynamic.string("read only")))
+  ///   }
+  /// })
+  /// ```
   Fail(error: QueryError)
-  /// Run the query and give its result to `on_result`. The query returns
-  /// the result of the database.
-  Capture(on_result: fn(Result(#(Int, List(Dynamic)), QueryError)) -> Nil)
+  /// Run the query and give its result to `on_result`.
+  ///
+  /// When `on_result` returns `Ok(Nil)`, the query returns the result of the
+  /// database. When it returns `Error(reason)`, the query returns
+  /// `Error(InterceptorFailed(reason))`, whatever the database gave.
+  Capture(
+    on_result: fn(Result(#(Int, List(Dynamic)), QueryError)) ->
+      Result(Nil, Dynamic),
+  )
 }
 
 @external(erlang, "pog_ffi", "query")
@@ -708,6 +726,20 @@ pub type QueryError {
   /// No connection was available to execute the query. This may be due to
   /// invalid connection details such as an invalid username or password.
   ConnectionUnavailable
+  /// An interceptor failed the query. `reason` is the value that the
+  /// interceptor gave; the package that made the interceptor reads it back.
+  ///
+  /// An interceptor fails a query before it runs with `Fail`:
+  ///
+  /// ```gleam
+  /// Interceptor(fn(_request) {
+  ///   Fail(InterceptorFailed(dynamic.string("no queries now")))
+  /// })
+  /// ```
+  ///
+  /// It fails a query after it runs when the `on_result` function of
+  /// `Capture` returns `Error(reason)`.
+  InterceptorFailed(reason: Dynamic)
 }
 
 pub opaque type Query(row_type) {
@@ -799,10 +831,10 @@ pub fn execute(
             Capture(on_result:) -> {
               // Execute real query
               let result = run_query(pool, query.sql, parameters, query.timeout)
-              // Give the result to the interceptor
-              on_result(result)
-              case result {
-                Ok(#(count, rows)) -> {
+              // Give the result to the interceptor, which can fail the query
+              case on_result(result), result {
+                Error(reason), _ -> Error(InterceptorFailed(reason))
+                Ok(Nil), Ok(#(count, rows)) -> {
                   use decoded <- result.try(
                     list.try_map(over: rows, with: decode.run(
                       _,
@@ -812,7 +844,7 @@ pub fn execute(
                   )
                   Ok(Returned(count, decoded))
                 }
-                Error(err) -> Error(err)
+                Ok(Nil), Error(err) -> Error(err)
               }
             }
           }

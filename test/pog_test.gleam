@@ -960,21 +960,6 @@ pub fn interceptor_crash_in_transaction_gives_back_the_connection_test() {
   disconnect(db)
 }
 
-pub fn interceptor_capture_gets_the_result_of_the_query_test() {
-  let results = process.new_subject()
-  let interceptor =
-    pog.Interceptor(fn(_request) {
-      pog.Capture(on_result: fn(result) { process.send(results, result) })
-    })
-  let db = start_with(process.new_name("pog_test"), Some(interceptor))
-  let assert Ok(pog.Returned(1, [1])) =
-    pog.query("select 1")
-    |> pog.returning(decode.at([0], decode.int))
-    |> pog.execute(db.data)
-  let assert Ok(Ok(#(1, [_]))) = process.receive(results, 1000)
-  disconnect(db)
-}
-
 // Interceptor ownership tests: the interceptor belongs to the pool process.
 
 @external(erlang, "pog_test_ffi", "interceptor_rows")
@@ -1119,4 +1104,176 @@ fn race(rounds: Int) -> Nil {
 
 pub fn interceptor_two_starts_at_the_same_moment_test() {
   race(20)
+}
+
+// Interceptor failure tests: `Capture` with `Error(reason)` and
+// `Fail(InterceptorFailed(reason))`.
+
+fn interceptor_reason() -> dynamic.Dynamic {
+  dynamic.string("the interceptor's reason")
+}
+
+fn capture_with(
+  outcome: Result(Nil, dynamic.Dynamic),
+) -> option.Option(pog.Interceptor) {
+  Some(
+    pog.Interceptor(fn(_request) { pog.Capture(on_result: fn(_) { outcome }) }),
+  )
+}
+
+fn select_one(
+  connection: pog.Connection,
+) -> Result(pog.Returned(Int), pog.QueryError) {
+  pog.query("select 1")
+  |> pog.returning(decode.at([0], decode.int))
+  |> pog.execute(connection)
+}
+
+fn invalid_sql(
+  connection: pog.Connection,
+) -> Result(pog.Returned(Nil), pog.QueryError) {
+  pog.query("select       select") |> pog.execute(connection)
+}
+
+const syntax_error = pog.PostgresqlError(
+  code: "42601",
+  name: "syntax_error",
+  message: "syntax error at or near \"select\"",
+)
+
+pub fn capture_error_fails_a_successful_query_in_a_pool_test() {
+  let db =
+    start_with(
+      process.new_name("pog_test"),
+      capture_with(Error(interceptor_reason())),
+    )
+  assert select_one(db.data)
+    == Error(pog.InterceptorFailed(interceptor_reason()))
+  disconnect(db)
+}
+
+pub fn capture_error_fails_a_failed_query_in_a_pool_test() {
+  let db =
+    start_with(
+      process.new_name("pog_test"),
+      capture_with(Error(interceptor_reason())),
+    )
+  assert invalid_sql(db.data)
+    == Error(pog.InterceptorFailed(interceptor_reason()))
+  disconnect(db)
+}
+
+pub fn capture_error_fails_a_successful_query_in_a_transaction_test() {
+  let db =
+    start_with(
+      process.new_name("pog_test"),
+      capture_with(Error(interceptor_reason())),
+    )
+  assert pog.transaction(db.data, select_one)
+    == Error(
+      pog.TransactionRolledBack(pog.InterceptorFailed(interceptor_reason())),
+    )
+  disconnect(db)
+}
+
+pub fn capture_error_fails_a_failed_query_in_a_transaction_test() {
+  let db =
+    start_with(
+      process.new_name("pog_test"),
+      capture_with(Error(interceptor_reason())),
+    )
+  assert pog.transaction(db.data, invalid_sql)
+    == Error(
+      pog.TransactionRolledBack(pog.InterceptorFailed(interceptor_reason())),
+    )
+  disconnect(db)
+}
+
+pub fn capture_ok_passes_a_successful_result_in_a_pool_test() {
+  let db = start_with(process.new_name("pog_test"), capture_with(Ok(Nil)))
+  assert select_one(db.data) == Ok(pog.Returned(1, [1]))
+  disconnect(db)
+}
+
+pub fn capture_ok_passes_a_database_error_in_a_pool_test() {
+  let db = start_with(process.new_name("pog_test"), capture_with(Ok(Nil)))
+  assert invalid_sql(db.data) == Error(syntax_error)
+  disconnect(db)
+}
+
+pub fn capture_ok_passes_a_successful_result_in_a_transaction_test() {
+  let db = start_with(process.new_name("pog_test"), capture_with(Ok(Nil)))
+  assert pog.transaction(db.data, select_one) == Ok(pog.Returned(1, [1]))
+  disconnect(db)
+}
+
+pub fn capture_ok_passes_a_database_error_in_a_transaction_test() {
+  let db = start_with(process.new_name("pog_test"), capture_with(Ok(Nil)))
+  assert pog.transaction(db.data, invalid_sql)
+    == Error(pog.TransactionRolledBack(syntax_error))
+  disconnect(db)
+}
+
+/// Fails the query that sets the session setting `pog.touched`, and
+/// lets every other query run. The pool has one connection, so a later query
+/// sees the setting only if the database ran the failed query.
+fn fail_the_setting_query() -> option.Option(pog.Interceptor) {
+  Some(
+    pog.Interceptor(fn(request) {
+      case request.sql {
+        "select set_config('pog.touched', 'yes', false)" ->
+          pog.Fail(pog.InterceptorFailed(interceptor_reason()))
+        _ -> pog.Continue
+      }
+    }),
+  )
+}
+
+fn set_the_setting(
+  connection: pog.Connection,
+) -> Result(pog.Returned(Nil), pog.QueryError) {
+  pog.query("select set_config('pog.touched', 'yes', false)")
+  |> pog.execute(connection)
+}
+
+fn read_the_setting(connection: pog.Connection) -> option.Option(String) {
+  let assert Ok(pog.Returned(_, [value])) =
+    pog.query("select current_setting('pog.touched', true)")
+    |> pog.returning(decode.at([0], decode.optional(decode.string)))
+    |> pog.execute(connection)
+  value
+}
+
+pub fn fail_with_interceptor_failed_returns_the_error_in_a_pool_test() {
+  let db = start_with(process.new_name("pog_test"), fail_the_setting_query())
+  assert set_the_setting(db.data)
+    == Error(pog.InterceptorFailed(interceptor_reason()))
+  disconnect(db)
+}
+
+pub fn fail_with_interceptor_failed_does_not_run_the_query_test() {
+  let db = start_with(process.new_name("pog_test"), fail_the_setting_query())
+  let _ = set_the_setting(db.data)
+  assert read_the_setting(db.data) == None
+  disconnect(db)
+}
+
+pub fn fail_with_interceptor_failed_returns_the_error_in_a_transaction_test() {
+  let db = start_with(process.new_name("pog_test"), fail_the_setting_query())
+  assert pog.transaction(db.data, set_the_setting)
+    == Error(
+      pog.TransactionRolledBack(pog.InterceptorFailed(interceptor_reason())),
+    )
+  disconnect(db)
+}
+
+pub fn fail_with_interceptor_failed_on_a_disconnected_connection_test() {
+  let connection =
+    pog.disconnected(
+      pog.Interceptor(fn(_request) {
+        pog.Fail(pog.InterceptorFailed(interceptor_reason()))
+      }),
+    )
+  assert select_one(connection)
+    == Error(pog.InterceptorFailed(interceptor_reason()))
 }

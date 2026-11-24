@@ -135,9 +135,14 @@ Your interceptor function returns an `InterceptResult`:
 - `Continue` - Execute the query normally against the database
 - `Respond(count: Int, rows: List(Dynamic))` - Return this data without querying
 - `Fail(error: QueryError)` - Return this error without querying
-- `Capture(on_result: fn(Result(#(Int, List(Dynamic)), QueryError)) -> Nil)` -
-  Run the query and give its result to `on_result`. The query returns the
-  result of the database
+- `Capture(on_result: fn(Result(#(Int, List(Dynamic)), QueryError)) -> Result(Nil, Dynamic))` -
+  Run the query and give its result to `on_result`. `Ok(Nil)` returns the
+  result of the database. `Error(reason)` fails the query
+
+An interceptor fails a query with a reason of its own with the error
+`InterceptorFailed(reason: Dynamic)`: before the query runs with
+`Fail(InterceptorFailed(reason))`, and after it runs when `on_result`
+returns `Error(reason)`.
 
 ## Support of connection URI
 
