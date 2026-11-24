@@ -1,6 +1,6 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1]).
+-export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1, convert_error/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
@@ -149,4 +149,28 @@ convert_error(#{
     Got = list_to_binary(io_lib:format("~p", [Value])),
     {unexpected_argument_type, Expected, Got};
 convert_error(closed) ->
-    query_timeout.
+    query_timeout;
+%% Catch-all: pgo can emit shapes outside the documented set
+%% (e.g. {pgo_error, _}, {unexpected_message, _}, client_disconnected,
+%% client_timeout, ssl_refused, {unimplemented, _}, etc.). Without this
+%% clause those shapes raise function_clause and crash the calling
+%% process, which can be a long-lived process of the application.
+%% We map them all to connection_unavailable
+%% so callers see a known, recoverable variant.
+%%
+%% Emits a structured `logger:warning` so consumers with a structured
+%% formatter (e.g. JSON) get queryable fields, while consumers with a
+%% string formatter still get something readable via `~p`. We
+%% intentionally do NOT set `domain` metadata: many default handlers
+%% install a `no_domain` filter that drops events whose domain is set
+%% to anything other than the handler's expected list, which would
+%% silence this warning instead of routing it. The error term is
+%% captured as a binary so it can't tunnel through a JSON formatter as
+%% a raw Erlang term.
+convert_error(Other) ->
+    logger:warning(#{
+        component => pog_convert_error,
+        event => unhandled_driver_error,
+        error_term => list_to_binary(io_lib:format("~p", [Other]))
+    }),
+    connection_unavailable.

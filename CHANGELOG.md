@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A driver error with an unknown shape now gives `ConnectionUnavailable` and a
+  `logger` warning. Before, it crashed the calling process.
 - `Returned.count` is always an `Int`. A command without a row count, such
   as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
   count was an atom such as `table` or `nil`.
