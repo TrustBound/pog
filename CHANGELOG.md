@@ -5,8 +5,8 @@
 The first release of `dream_pog`, a fork of pog v4.1.0.
 
 - The package, the Gleam module and the Erlang module have new names:
-  `dream_pog` and `dream_pog_ffi`. The ETS table, the process dictionary key
-  and the logger component have the `dream_pog` prefix. To move from pog, use
+  `dream_pog` and `dream_pog_ffi`. The logger component has the `dream_pog`
+  prefix. To move from pog, use
   `import dream_pog as pog`.
 - The driver is `dream_pgo`, a fork of pgo v0.20.0, not `pgo`.
 - A caller's `application_name` connection parameter now reaches the server
@@ -15,11 +15,14 @@ The first release of `dream_pog`, a fork of pog v4.1.0.
   `Interceptor`, `InterceptRequest` and `InterceptResult` types. A pool
   without an interceptor does not use the interceptor of an earlier pool with
   the same name.
-- The interceptor belongs to the pool process. A start with the name of a
-  pool that runs fails and does not change the interceptor of that pool. The
-  first query after a start uses the interceptor. When the pool stops, its
-  interceptor is removed. Two starts of the same name at the same time do not
-  race: one fails.
+- The interceptor is in the pool. `start` gives it to the `dream_pgo` pool
+  as the `extra` setting, and the pool keeps it with each connection. A query
+  checks out a connection and reads the interceptor from it: `Continue` and
+  `Capture` run the query on that connection, and `Respond` and `Fail` give
+  the connection back unused. A start with the name of a pool that runs fails
+  and does not change the interceptor of that pool. The first query after a
+  start uses the interceptor. When the pool stops, its interceptor stops with
+  it. Two starts of the same name at the same time do not race: one fails.
 - Added the `InterceptorFailed(reason: Dynamic)` query error. An interceptor
   fails a query with it: before the query runs with
   `Fail(InterceptorFailed(reason))`, and after the query runs when the

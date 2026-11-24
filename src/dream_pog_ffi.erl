@@ -1,29 +1,9 @@
 -module(dream_pog_ffi).
 
--export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, get_pool_interceptor_safe/1, cleanup_checkout_interceptor/1, convert_error/1]).
+-export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, checkout/2, interceptor/1, convert_error/1]).
 
 -include_lib("dream_pog/include/dream_pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
-
--define(INTERCEPTOR_TABLE, dream_pog_interceptor_table).
-
-ensure_interceptor_table() ->
-    case ets:info(?INTERCEPTOR_TABLE) of
-        undefined ->
-            % Two processes can both find no table. Then the second ets:new
-            % fails, and the table that the first one made is correct.
-            try
-                ets:new(
-                    ?INTERCEPTOR_TABLE,
-                    [named_table, public, set, {heir, whereis(init), undefined}]
-                )
-            catch
-                error:badarg -> ok
-            end,
-            ok;
-        _ ->
-            ok
-    end.
 
 null() ->
     null.
@@ -119,8 +99,8 @@ start(Config) ->
     case pool_options(Config) of
         {ok, Options} ->
             #config{pool_name = PoolName, interceptor = Interceptor} = Config,
-            ensure_interceptor_table(),
-            start_pool(PoolName, Interceptor, Options);
+            % The pool keeps the interceptor with each connection.
+            dream_pgo_pool:start_link(PoolName, Options#{extra => Interceptor});
         {error, _} = Error ->
             Error
     end.
@@ -175,16 +155,23 @@ pool_options(Config) ->
             Error
     end.
 
-query(Pool, Sql, Arguments, Timeout) ->
+query(Pool, Sql, Arguments, _Timeout) ->
     Res = case Pool of
         {single_connection, Conn} ->
             dream_pgo_handler:extended_query(Conn, Sql, Arguments, #{});
-        {pool, Name} ->
-            Options = #{
-                pool => Name,
-                pool_options => [{timeout, Timeout}]
-            },
-            dream_pgo:query(Sql, Arguments, Options)
+        {checked_out, {_, _, _, Holder}, Conn} ->
+            % As dream_pgo:query/3 runs a query on a connection of the pool:
+            % the pool removes the holder when the timeout of the checkout
+            % passes.
+            case dream_pgo:query(Sql, Arguments, #{}, Conn) of
+                {error, Closed} when Closed =:= closed; Closed =:= einval ->
+                    case ets:info(Holder, size) of
+                        undefined -> {error, query_timeout};
+                        _ -> {error, closed}
+                    end;
+                Result ->
+                    Result
+            end
     end,
     case Res of
         #{rows := Rows, num_rows := NumRows} ->
@@ -214,13 +201,13 @@ count(_) ->
 
 checkout(Name) when is_atom(Name) ->
     case dream_pgo:checkout(Name) of
-        {ok, Ref, Conn} ->
-            % Copy pool's interceptor to connection for transaction support
-            case pool_interceptor(Name) of
-                {some, Interceptor} -> put({dream_pog_conn_interceptor, Conn}, Interceptor);
-                none -> ok
-            end,
-            {ok, {Ref, Conn}};
+        {ok, Ref, Conn} -> {ok, {Ref, Conn}};
+        {error, Error} -> {error, convert_error(Error)}
+    end.
+
+checkout(Name, Timeout) when is_atom(Name) ->
+    case dream_pgo:checkout(Name, [{timeout, Timeout}]) of
+        {ok, Ref, Conn} -> {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
@@ -278,120 +265,11 @@ convert_error(Other) ->
     }),
     connection_unavailable.
 
-%% Interceptor support
-%% The interceptor of a pool is the row {PoolName, Keeper, Interceptor} of the
-%% interceptor table, with the interceptor as an option. The row is written
-%% before the pool starts, so the first query of the pool uses it, and the
-%% keeper process removes it when the pool stops. Only the start that inserts
-%% the row starts the pool, so two starts of the same name do not race, and a
-%% start that fails does not touch the row of another start.
-start_pool(PoolName, Interceptor, Options) ->
-    case whereis(PoolName) of
-        undefined -> claim_pool(PoolName, Interceptor, Options);
-        Pool -> {error, {already_started, Pool}}
-    end.
-
-claim_pool(PoolName, Interceptor, Options) ->
-    Starter = self(),
-    Keeper = spawn(fun() -> keep_interceptor(PoolName, Starter) end),
-    case ets:insert_new(?INTERCEPTOR_TABLE, {PoolName, Keeper, Interceptor}) of
-        true ->
-            case dream_pgo_pool:start_link(PoolName, Options) of
-                {ok, Pool} = Started ->
-                    Keeper ! {started, Pool},
-                    Started;
-                Error ->
-                    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, Keeper, '_'}),
-                    Keeper ! failed,
-                    Error
-            end;
-        false ->
-            Keeper ! failed,
-            wait_for_other_start(PoolName, Interceptor, Options)
-    end.
-
-%% Another start has the row: of a pool that runs, of a start that is not
-%% done yet, or of a pool that stopped before its keeper removed the row. The
-%% keeper of the row gives the pool when the pool runs. It stops when there is
-%% no pool, and then this start tries again.
-wait_for_other_start(PoolName, Interceptor, Options) ->
-    case ets:lookup(?INTERCEPTOR_TABLE, PoolName) of
-        [{PoolName, Other, _}] ->
-            Ref = erlang:monitor(process, Other),
-            Other ! {pool, self(), Ref},
-            receive
-                {Ref, Pool} ->
-                    erlang:demonitor(Ref, [flush]),
-                    {error, {already_started, Pool}};
-                {'DOWN', Ref, process, Other, _} ->
-                    % A keeper that was killed did not remove its row.
-                    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, Other, '_'}),
-                    start_pool(PoolName, Interceptor, Options)
-            end;
-        [] ->
-            start_pool(PoolName, Interceptor, Options)
-    end.
-
-%% Removes the row of a pool when the pool stops, when its start fails, or
-%% when the process that starts the pool stops before the pool starts.
-keep_interceptor(PoolName, Starter) ->
-    StarterRef = erlang:monitor(process, Starter),
-    receive
-        {started, Pool} ->
-            erlang:demonitor(StarterRef, [flush]),
-            keep_pool(Pool, erlang:monitor(process, Pool));
-        failed ->
-            ok;
-        {'DOWN', StarterRef, process, Starter, _} ->
-            ok
-    end,
-    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, self(), '_'}).
-
-%% Gives the pool to each start that asks, until the pool stops.
-keep_pool(Pool, PoolRef) ->
-    receive
-        {'DOWN', PoolRef, process, Pool, _} ->
-            ok;
-        {pool, From, Ref} ->
-            case is_process_alive(Pool) of
-                true ->
-                    From ! {Ref, Pool},
-                    keep_pool(Pool, PoolRef);
-                false ->
-                    ok
-            end
-    end.
-
-pool_interceptor(PoolName) ->
-    try ets:lookup(?INTERCEPTOR_TABLE, PoolName) of
-        [{PoolName, _Keeper, Interceptor}] -> Interceptor;
-        [] -> none
-    catch
-        error:badarg -> none
-    end.
-
-%% Get interceptor for a connection
-get_pool_interceptor(Connection) ->
-    case Connection of
-        {pool, Name} ->
-            pool_interceptor(Name);
-        {single_connection, Conn} ->
-            % For single connections (from transactions), lookup by connection handle
-            case get({dream_pog_conn_interceptor, Conn}) of
-                undefined -> none;
-                Interceptor -> {some, Interceptor}
-            end
-    end.
-
-get_pool_interceptor_safe(Connection) ->
-    case Connection of
-        {pool, _} -> get_pool_interceptor(Connection);
-        {single_connection, _} -> get_pool_interceptor(Connection);
-        {disconnected, _} -> none;
+%% The interceptor of the pool of a connection. `start` gives the
+%% interceptor to the pool as its `extra` setting, and the pool keeps it with
+%% each connection.
+interceptor(Conn) ->
+    case dream_pgo:conn_extra(Conn) of
+        {some, _} = Interceptor -> Interceptor;
         _ -> none
     end.
-
-%% Cleanup interceptor reference when connection is checked back in
-cleanup_checkout_interceptor(Conn) ->
-    erase({dream_pog_conn_interceptor, Conn}),
-    nil.

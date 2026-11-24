@@ -7,9 +7,8 @@ and it uses the [dream_pgo][dream_pgo] driver, a fork of [pgo][erlang-pgo] 0.20.
 What is different from pog:
 
 - Names. The package and the Gleam module are `dream_pog`, the Erlang module is
-  `dream_pog_ffi`, and the ETS table, the process dictionary key and the logger
-  component have the `dream_pog` prefix. Thus `dream_pog` and `pog` can load
-  in the same VM.
+  `dream_pog_ffi`, and the logger component has the `dream_pog` prefix. Thus
+  `dream_pog` and `pog` can load in the same VM.
 - The driver. `dream_pog` uses `dream_pgo`, not `pgo`.
 - A query interceptor: `pog.interceptor(config, Some(interceptor))` and
   `pog.disconnected(interceptor)`, with the types `Interceptor`,

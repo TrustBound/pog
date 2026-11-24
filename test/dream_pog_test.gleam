@@ -974,15 +974,7 @@ pub fn interceptor_crash_in_transaction_gives_back_the_connection_test() {
   disconnect(db)
 }
 
-// Interceptor ownership tests: the interceptor belongs to the pool process.
-
-@external(erlang, "dream_pog_test_ffi", "interceptor_rows")
-fn interceptor_rows(name: process.Name(pog.Message)) -> List(dynamic.Dynamic)
-
-@external(erlang, "dream_pog_test_ffi", "interceptor_keeper")
-fn interceptor_keeper(
-  name: process.Name(pog.Message),
-) -> Result(process.Pid, Nil)
+// Interceptor ownership tests: the interceptor is in the pool.
 
 @external(erlang, "gleam_stdlib", "identity")
 fn to_dynamic(value: a) -> dynamic.Dynamic
@@ -1018,24 +1010,16 @@ pub fn interceptor_failed_start_without_interceptor_keeps_the_interceptor_test()
   disconnect(first)
 }
 
-pub fn interceptor_is_removed_when_the_pool_stops_test() {
+pub fn interceptor_stops_with_the_pool_test() {
   let name = process.new_name("pog_test")
   let db = start_with(name, Some(respond_with(14)))
-  let keeper = interceptor_keeper(name)
   stop_and_wait(name, db)
-  case keeper {
-    Ok(pid) -> {
-      let monitor = process.monitor(pid)
-      let assert Ok(_) =
-        process.new_selector()
-        |> process.select_specific_monitor(monitor, fn(down) { down })
-        |> process.selector_receive(1000)
-      Nil
-    }
-    Error(Nil) -> Nil
-  }
-  assert interceptor_rows(name) == []
-  assert result.is_ok(keeper)
+  // No pool runs: the query fails, and no interceptor answers it.
+  let assert Error(_) = exception.rescue(fn() { intercepted_value(db.data) })
+  // A new pool of the same name without an interceptor runs no interceptor.
+  let second = start_with(name, None)
+  assert intercepted_value(second.data) == Error(Nil)
+  disconnect(second)
 }
 
 /// Waits until a process has the name, without a pause between the tries.

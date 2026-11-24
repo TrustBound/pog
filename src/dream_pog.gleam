@@ -597,16 +597,15 @@ fn checkout(
   pool: Name(Message),
 ) -> Result(#(Reference, SingleConnection), QueryError)
 
-@external(erlang, "dream_pog_ffi", "cleanup_checkout_interceptor")
-fn cleanup_checkout_interceptor(conn: SingleConnection) -> Nil
+/// Checks out a connection for one query, with the timeout of the query.
+@external(erlang, "dream_pog_ffi", "checkout")
+fn checkout_for_query(
+  pool: Name(Message),
+  timeout: Int,
+) -> Result(#(Reference, SingleConnection), QueryError)
 
 @external(erlang, "dream_pgo", "checkin")
-fn do_checkin(ref: Reference, conn: SingleConnection) -> Dynamic
-
-fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic {
-  cleanup_checkout_interceptor(conn)
-  do_checkin(ref, conn)
-}
+fn checkin(ref: Reference, conn: SingleConnection) -> Dynamic
 
 pub fn nullable(inner_type: fn(a) -> Value, value: Option(a)) -> Value {
   case value {
@@ -695,6 +694,19 @@ pub type InterceptResult {
 @external(erlang, "dream_pog_ffi", "query")
 fn run_query(
   a: Connection,
+  b: String,
+  c: List(Value),
+  timeout: Int,
+) -> Result(#(Int, List(Dynamic)), QueryError)
+
+/// A connection that `checkout_for_query` gave.
+type CheckedOut {
+  CheckedOut(ref: Reference, conn: SingleConnection)
+}
+
+@external(erlang, "dream_pog_ffi", "query")
+fn run_checked_out_query(
+  a: CheckedOut,
   b: String,
   c: List(Value),
   timeout: Int,
@@ -812,60 +824,75 @@ pub fn execute(
       }
     }
 
-    Pool(_) | SingleConnection(_) -> {
-      // Connected pool or connection - check for interceptor
-      case get_pool_interceptor(pool) {
-        Some(interceptor) -> {
-          let request =
-            InterceptRequest(
-              sql: query.sql,
-              parameters: parameters,
-              timeout: query.timeout,
-            )
+    Pool(name) -> {
+      // The pool keeps its interceptor with each connection: check out a
+      // connection to read it, and run the query on that connection
+      use #(ref, conn) <- result.try(checkout_for_query(name, query.timeout))
+      use <- exception.defer(fn() { checkin(ref, conn) })
+      intercept(conn, query, parameters, fn() {
+        run_checked_out_query(
+          CheckedOut(ref, conn),
+          query.sql,
+          parameters,
+          query.timeout,
+        )
+      })
+    }
 
-          case interceptor.intercept(request) {
-            Continue -> execute_query(pool, query, parameters)
-            Respond(count:, rows:) ->
-              decode_intercepted_rows(count, rows, query.row_decoder)
-            Fail(error:) -> Error(error)
-            Capture(on_result:) -> {
-              // Execute real query
-              let result = run_query(pool, query.sql, parameters, query.timeout)
-              // Give the result to the interceptor, which can fail the query
-              case on_result(result), result {
-                Error(reason), _ -> Error(InterceptorFailed(reason))
-                Ok(Nil), Ok(#(count, rows)) -> {
-                  use decoded <- result.try(
-                    list.try_map(over: rows, with: decode.run(
-                      _,
-                      query.row_decoder,
-                    ))
-                    |> result.map_error(UnexpectedResultType),
-                  )
-                  Ok(Returned(count, decoded))
-                }
-                Ok(Nil), Error(err) -> Error(err)
-              }
+    SingleConnection(conn) ->
+      intercept(conn, query, parameters, fn() {
+        run_query(pool, query.sql, parameters, query.timeout)
+      })
+  }
+}
+
+fn intercept(
+  conn: SingleConnection,
+  query: Query(t),
+  parameters: List(Value),
+  run: fn() -> Result(#(Int, List(Dynamic)), QueryError),
+) -> Result(Returned(t), QueryError) {
+  case connection_interceptor(conn) {
+    Some(interceptor) -> {
+      let request =
+        InterceptRequest(
+          sql: query.sql,
+          parameters: parameters,
+          timeout: query.timeout,
+        )
+
+      case interceptor.intercept(request) {
+        Continue -> execute_query(query, run)
+        Respond(count:, rows:) ->
+          decode_intercepted_rows(count, rows, query.row_decoder)
+        Fail(error:) -> Error(error)
+        Capture(on_result:) -> {
+          // Execute real query
+          let result = run()
+          // Give the result to the interceptor, which can fail the query
+          case on_result(result), result {
+            Error(reason), _ -> Error(InterceptorFailed(reason))
+            Ok(Nil), Ok(#(count, rows)) -> {
+              use decoded <- result.try(
+                list.try_map(over: rows, with: decode.run(_, query.row_decoder))
+                |> result.map_error(UnexpectedResultType),
+              )
+              Ok(Returned(count, decoded))
             }
+            Ok(Nil), Error(err) -> Error(err)
           }
         }
-        None -> execute_query(pool, query, parameters)
       }
     }
+    None -> execute_query(query, run)
   }
 }
 
 fn execute_query(
-  pool: Connection,
   query: Query(t),
-  parameters: List(Value),
+  run: fn() -> Result(#(Int, List(Dynamic)), QueryError),
 ) -> Result(Returned(t), QueryError) {
-  use #(count, rows) <- result.try(run_query(
-    pool,
-    query.sql,
-    parameters,
-    query.timeout,
-  ))
+  use #(count, rows) <- result.try(run())
   use rows <- result.try(
     list.try_map(over: rows, with: decode.run(_, query.row_decoder))
     |> result.map_error(UnexpectedResultType),
@@ -885,8 +912,9 @@ fn decode_intercepted_rows(
   Ok(Returned(count, decoded))
 }
 
-@external(erlang, "dream_pog_ffi", "get_pool_interceptor")
-fn get_pool_interceptor(pool: Connection) -> Option(Interceptor)
+/// The interceptor of the pool of the connection.
+@external(erlang, "dream_pog_ffi", "interceptor")
+fn connection_interceptor(conn: SingleConnection) -> Option(Interceptor)
 
 /// Get the name for a PostgreSQL error code.
 ///

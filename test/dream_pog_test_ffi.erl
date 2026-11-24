@@ -1,21 +1,6 @@
 -module(dream_pog_test_ffi).
 
--export([env_port/2, ssl_probe/1, system_cacerts/0, interceptor_rows/1,
-         interceptor_keeper/1]).
-
-%% The rows of the interceptor table for the pool Name.
-interceptor_rows(Name) ->
-    try ets:lookup(dream_pog_interceptor_table, Name)
-    catch error:badarg -> []
-    end.
-
-%% The process that removes the interceptor of the pool Name when the pool
-%% stops.
-interceptor_keeper(Name) ->
-    case interceptor_rows(Name) of
-        [{Name, Keeper, _Interceptor}] -> {ok, Keeper};
-        _ -> {error, nil}
-    end.
+-export([env_port/2, ssl_probe/1, system_cacerts/0]).
 
 %% The port in the environment variable Name, or Default when it is not set.
 env_port(Name, Default) ->
