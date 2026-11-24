@@ -1,14 +1,51 @@
-# Pog
+# dream_pog
 
-A PostgreSQL database client for Gleam, based on [PGO][erlang-pgo].
+`dream_pog` is a fork of [pog][pog], the PostgreSQL client for Gleam by Louis
+Pilfold. It is published on Hex as `dream_pog`. The fork starts from pog 4.1.0,
+and it uses the [dream_pgo][dream_pgo] driver, a fork of [pgo][erlang-pgo] 0.20.0.
 
-[erlang-pgo]: https://github.com/erleans/pgo
+What is different from pog:
 
-[![Package Version](https://img.shields.io/hexpm/v/pog)](https://hex.pm/packages/pog)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/pog/)
+- Names. The package and the Gleam module are `dream_pog`, the Erlang module is
+  `dream_pog_ffi`, and the ETS table, the process dictionary key and the logger
+  component have the `dream_pog` prefix. Thus `dream_pog` and `pog` can load
+  in the same VM.
+- The driver. `dream_pog` uses `dream_pgo`, not `pgo`.
+- A query interceptor: `pog.interceptor(config, Some(interceptor))` and
+  `pog.disconnected(interceptor)`, with the types `Interceptor`,
+  `InterceptRequest` and `InterceptResult` (`Continue`, `Respond`, `Fail`,
+  `Capture`). Use it for logs, observability and tests.
+- A driver error that `dream_pog` does not know gives `ConnectionUnavailable`
+  and a `logger` warning. In pog, such an error crashes the calling process.
+- Three SSL settings: `SslVerifiedCaFile(path)` reads the CA certificates for
+  one pool from a PEM file, and `SslVerifiedChainOnly` and
+  `SslVerifiedChainOnlyCaFile(path)` make sure of the certificate chain but
+  not of the host name (`sslmode=verify-ca` of libpq). Refer to
+  [Solving SSL issues](docs/solving-ssl-issues.md).
+- `url_config` reads `sslmode` and `sslrootcert` as libpq does: `verify-ca`
+  checks the chain only, `verify-full` also checks the host name, and
+  `sslrootcert=<path>` selects the CA file form of the mode.
+- `application_name`. A `connection_parameter(config, "application_name", name)`
+  reaches the server (a fix in `dream_pgo`).
+
+To move from pog, change the dependency and the import. The rest of your code
+stays the same:
 
 ```gleam
-gleam add pog@4
+import dream_pog as pog
+```
+
+The rest of this README is the pog README, with the package name changed.
+
+[pog]: https://github.com/lpil/pog
+[dream_pgo]: https://hex.pm/packages/dream_pgo
+[erlang-pgo]: https://github.com/erleans/pgo
+
+[![Package Version](https://img.shields.io/hexpm/v/dream_pog)](https://hex.pm/packages/dream_pog)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/dream_pog/)
+
+```gleam
+gleam add dream_pog
 ```
 
 Add a pool to your OTP supervision tree, before any siblings that will need to
@@ -20,7 +57,7 @@ outside of your supervision tree and pass it down to the creation of the pool.
 ```gleam
 import gleam/otp/static_supervisor as supervisor
 import gleam/erlang/process
-import pog
+import dream_pog as pog
 
 pub fn start_application_supervisor(pool_name: process.Name(pog.Message)) {
   let pool_child = 
@@ -43,7 +80,7 @@ Then in your application you can use a connection created from that name with
 the `pog.named_connection` to make queries:
 
 ```gleam
-import pog
+import dream_pog as pog
 import gleam/dynamic/decode
 
 pub fn run(db: pog.Connection) {
@@ -91,7 +128,7 @@ Interceptors allow you to observe, log, or modify query execution. They're calle
 
 ```gleam
 import gleam/io
-import pog
+import dream_pog as pog
 
 let logger = pog.Interceptor(fn(request) {
   io.println("SQL: " <> request.sql)
@@ -146,9 +183,9 @@ returns `Error(reason)`.
 
 ## Support of connection URI
 
-Configuring a Postgres connection is done by using `Config` type in `pog`.
+Configuring a Postgres connection is done by using `Config` type in `dream_pog`.
 To facilitate connection, and to provide easy integration with the rest of the
-Postgres ecosystem, `pog` provides handling of
+Postgres ecosystem, `dream_pog` provides handling of
 [connection URI as defined by Postgres](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS).
 Shape of connection URI is `postgresql://[username:password@][host:port][/dbname][?query]`.
 Call `pog.url_config` with your connection URI, and in case it's correct
@@ -160,7 +197,7 @@ connection URI from the environment.
 ```gleam
 import envoy
 import gleam/erlang/process.{type Name}
-import pog
+import dream_pog as pog
 
 /// Read the DATABASE_URL environment variable and then
 /// build the pog.Config from that database URL.
@@ -200,7 +237,7 @@ As for the rest of the web, you should try to use SSL connections with any
 Postgres database. Most of the time, managed instances of Postgres will even
 require the library to use SSL connections.
 
-`pog` supports SSL connections out-of-the-box, and stick with current Postgres
+`dream_pog` supports SSL connections out-of-the-box, and stick with current Postgres
 conventions to ensure portability of Postgres configuration across ecosystems.
 
 ### Postgres SSL conventions
@@ -239,15 +276,15 @@ In Postgres, conventions used, including in connection URI are as follow:
 - `verify-full` enables SSL connection, and checks the certificate chain and the host name.
 - `sslrootcert=<path>` gives the file of CA certificates. With `require`, it makes libpq check the certificate chain, as `verify-ca` does.
 
-### `pog` SSL usage
+### `dream_pog` SSL usage
 
-In `pog`, setting up an SSL connection simply ask you to indicate the proper flag
+In `dream_pog`, setting up an SSL connection simply ask you to indicate the proper flag
 in `pog.Config`. The different options are `SslDisabled`, `SslUnverified` &
 `SslVerified`. Because of the nature of the 3 modes of SSL, and because talking
 to your database should be highly secured to protect you against man-in-the-middle
 attacks, you should always try to use the most secured setting.
 
-There are three more settings. `SslVerifiedCaFile(path)` reads the CA
+`dream_pog` adds three settings. `SslVerifiedCaFile(path)` reads the CA
 certificates for one pool from a PEM file. `SslVerifiedChainOnly` and
 `SslVerifiedChainOnlyCaFile(path)` make sure of the certificate chain but not
 of the host name, as `verify-ca` of libpq does. `url_config` maps the URL
@@ -265,14 +302,14 @@ settings to these values:
 | `sslmode=verify-full&sslrootcert=<path>`      | `SslVerifiedCaFile(path)`           |
 | `sslrootcert=system` (with or without `sslmode=verify-full`) | `SslVerified`        |
 
-Refer to [Solving SSL issues](https://hexdocs.pm/pog/docs/solving-ssl-issues.html)
+Refer to [Solving SSL issues](https://hexdocs.pm/dream_pog/docs/solving-ssl-issues.html)
 for what each mode does.
 
 ### Need some help?
 
 You tried to setup a secured connection, but it does not work? Your container
 is not able to find the correct CA certificate?
-[Take a look at Solving SSL issues](https://hexdocs.pm/pog/docs/solving-ssl-issues.html)
+[Take a look at Solving SSL issues](https://hexdocs.pm/dream_pog/docs/solving-ssl-issues.html)
 
 ## History
 

@@ -36,24 +36,24 @@ it's properly secured, everyone will have an error, rejecting because the CA
 certificate can not be verified.
 
 To make sure your error comes from an CA certificate issue, it's recommended to
-first test your connection in `pog` with `ssl: pog.SslUnverified`. Because of the
+first test your connection in `dream_pog` with `ssl: pog.SslUnverified`. Because of the
 nature of the setting, if the only error comes from SSL, it should work directly.
 If it does not work, your problem comes from something else.
 
 In such case, it's required to provide the correct CA certificates to the client.
-`pog` tries to solve the problem in an elegant way. Instead of having to
-grab the certificate and handle it in your application code, `pog` will
+`dream_pog` tries to solve the problem in an elegant way. Instead of having to
+grab the certificate and handle it in your application code, `dream_pog` will
 read the certificates from your OS, using Erlang function
 `public_key:cacerts_get()`.
 
 #### Giving a CA file to one pool
 
-`pog` can also read the CA certificates from a PEM file, for one pool
+`dream_pog` can also read the CA certificates from a PEM file, for one pool
 only. Use this for a database with a private certificate authority, when you do
 not want to change the certificate list of the OS:
 
 ```gleam
-import pog
+import dream_pog as pog
 
 pog.default_config(pool_name)
 |> pog.host("db.internal.example.com")
@@ -118,7 +118,7 @@ What each mode does:
 `sslrootcert=<path>` gives the CA certificates of the PEM file at `path`
 (percent-encoded in the URL). Without `sslrootcert`, the modes use the CA
 certificates of the OS. libpq uses `~/.postgresql/root.crt` in that case;
-`pog` does not read that file. `sslrootcert=system` selects the CA
+`dream_pog` does not read that file. `sslrootcert=system` selects the CA
 certificates of the OS. libpq refuses every `sslmode` other than
 `verify-full` with it, and so does `url_config`. Any other `sslmode` value
 (`allow`, `prefer`), or a query without `sslmode`, makes `url_config` fail.
