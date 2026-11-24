@@ -27,7 +27,10 @@ jobs:
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "28"
-          gleam-version: "1.11.1"
+          # gleam_stdlib 1.2.0 of manifest.toml needs Gleam 1.14.0 or newer.
+          # `gleam format` output can change between Gleam versions, so the
+          # format check uses this exact version.
+          gleam-version: "1.14.0"
           rebar3-version: "3"
           # ImageOS: ubuntu20
       - run: gleam build
