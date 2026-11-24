@@ -1,4 +1,5 @@
 import exception
+import gleam/dynamic
 import gleam/dynamic/decode.{type Decoder}
 import gleam/erlang/process
 import gleam/option.{None, Some}
@@ -723,5 +724,250 @@ pub fn transaction_commit_test() {
   let assert True = id1 == got1
   let assert True = id2 == got2
 
+  disconnect(db)
+}
+
+// Interceptor tests
+
+pub fn interceptor_logging_test() {
+  let interceptor =
+    pog.Interceptor(fn(request) {
+      let _ = request.sql
+      pog.Continue
+    })
+
+  let name = process.new_name("pog_test")
+  let config =
+    pog.Config(..default_config(name), interceptor: Some(interceptor))
+
+  assert config.interceptor == Some(interceptor)
+}
+
+pub fn interceptor_respond_with_data_test() {
+  let test_data = dynamic.array([dynamic.int(42), dynamic.string("test")])
+  let interceptor =
+    pog.Interceptor(fn(_request) { pog.Respond(1, [test_data]) })
+
+  let name = process.new_name("pog_test")
+  let config =
+    pog.Config(..default_config(name), interceptor: Some(interceptor))
+  let assert Ok(started) = pog.start(config)
+
+  let decoder = {
+    use id <- decode.field(0, decode.int)
+    use name <- decode.field(1, decode.string)
+    decode.success(#(id, name))
+  }
+
+  let result =
+    pog.query("SELECT id, name FROM users")
+    |> pog.returning(decoder)
+    |> pog.execute(started.data)
+
+  assert result == Ok(pog.Returned(1, [#(42, "test")]))
+
+  disconnect(started)
+}
+
+pub fn interceptor_fail_with_error_test() {
+  let interceptor =
+    pog.Interceptor(fn(_request) { pog.Fail(pog.ConnectionUnavailable) })
+  let name = process.new_name("pog_test")
+  let config =
+    pog.Config(..default_config(name), interceptor: Some(interceptor))
+  let assert Ok(started) = pog.start(config)
+
+  let result =
+    pog.query("SELECT * FROM users")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(started.data)
+
+  assert result == Error(pog.ConnectionUnavailable)
+
+  disconnect(started)
+}
+
+pub fn no_interceptor_is_default_test() {
+  let name = process.new_name("pog_test")
+  let config = default_config(name)
+
+  assert config.interceptor == None
+}
+
+pub fn interceptor_can_inspect_sql_test() {
+  let interceptor =
+    pog.Interceptor(fn(request) {
+      case request.sql {
+        "SELECT 1" -> pog.Respond(1, [dynamic.array([dynamic.int(1)])])
+        "SELECT 2" -> pog.Respond(1, [dynamic.array([dynamic.int(2)])])
+        _ -> pog.Continue
+      }
+    })
+
+  let name = process.new_name("pog_test")
+  let config =
+    pog.Config(..default_config(name), interceptor: Some(interceptor))
+  let assert Ok(started) = pog.start(config)
+
+  let result1 =
+    pog.query("SELECT 1")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(started.data)
+
+  assert result1 == Ok(pog.Returned(1, [1]))
+
+  let result2 =
+    pog.query("SELECT 2")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(started.data)
+
+  assert result2 == Ok(pog.Returned(1, [2]))
+
+  disconnect(started)
+}
+
+// Interceptor tests: pools, names, processes, transactions and crashes.
+
+fn respond_with(value: Int) -> pog.Interceptor {
+  pog.Interceptor(fn(request) {
+    case request.sql {
+      "select 'intercepted?'" ->
+        pog.Respond(1, [dynamic.array([dynamic.int(value)])])
+      "boom" -> panic as "interceptor crash"
+      _ -> pog.Continue
+    }
+  })
+}
+
+/// Runs `select 'intercepted?'`. An interceptor of `respond_with` gives its
+/// number; the server gives the text, which the decoder refuses, so without
+/// an interceptor the result is an error.
+fn intercepted_value(connection: pog.Connection) -> Result(Int, Nil) {
+  case
+    pog.query("select 'intercepted?'")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(connection)
+  {
+    Ok(pog.Returned(_, [value])) -> Ok(value)
+    _ -> Error(Nil)
+  }
+}
+
+fn start_with(
+  name: process.Name(pog.Message),
+  interceptor: option.Option(pog.Interceptor),
+) -> actor.Started(pog.Connection) {
+  let assert Ok(started) =
+    pog.Config(..default_config(name), interceptor: interceptor)
+    |> pog.start
+  started
+}
+
+/// Stops the pool and waits until its name is free.
+fn stop_and_wait(name: process.Name(pog.Message), db: actor.Started(a)) -> Nil {
+  process.send_exit(db.pid)
+  wait_for_free_name(name, 100)
+}
+
+fn wait_for_free_name(name: process.Name(pog.Message), tries: Int) -> Nil {
+  case process.named(name), tries {
+    Error(Nil), _ -> Nil
+    Ok(_), 0 -> panic as "the pool did not stop"
+    Ok(_), _ -> {
+      process.sleep(10)
+      wait_for_free_name(name, tries - 1)
+    }
+  }
+}
+
+pub fn interceptor_two_pools_have_their_own_interceptors_test() {
+  let a = start_with(process.new_name("pog_test"), Some(respond_with(1)))
+  let b = start_with(process.new_name("pog_test"), Some(respond_with(2)))
+  let c = start_with(process.new_name("pog_test"), None)
+  assert intercepted_value(a.data) == Ok(1)
+  assert intercepted_value(b.data) == Ok(2)
+  assert intercepted_value(c.data) == Error(Nil)
+  disconnect(a)
+  disconnect(b)
+  disconnect(c)
+}
+
+pub fn interceptor_new_pool_with_same_name_and_other_interceptor_test() {
+  let name = process.new_name("pog_test")
+  let first = start_with(name, Some(respond_with(1)))
+  assert intercepted_value(first.data) == Ok(1)
+  stop_and_wait(name, first)
+  let second = start_with(name, Some(respond_with(2)))
+  assert intercepted_value(second.data) == Ok(2)
+  disconnect(second)
+}
+
+pub fn interceptor_new_pool_with_same_name_and_no_interceptor_test() {
+  let name = process.new_name("pog_test")
+  let first = start_with(name, Some(respond_with(1)))
+  assert intercepted_value(first.data) == Ok(1)
+  stop_and_wait(name, first)
+  let second = start_with(name, None)
+  assert intercepted_value(second.data) == Error(Nil)
+  disconnect(second)
+}
+
+pub fn interceptor_applies_in_another_process_test() {
+  let db = start_with(process.new_name("pog_test"), Some(respond_with(3)))
+  let subject = process.new_subject()
+  process.spawn(fn() { process.send(subject, intercepted_value(db.data)) })
+  assert process.receive(subject, 1000) == Ok(Ok(3))
+  disconnect(db)
+}
+
+pub fn interceptor_applies_in_transaction_test() {
+  let db = start_with(process.new_name("pog_test"), Some(respond_with(4)))
+  let assert Ok(value) =
+    pog.transaction(db.data, fn(connection) { intercepted_value(connection) })
+  assert value == 4
+  disconnect(db)
+}
+
+pub fn interceptor_crash_reaches_the_caller_test() {
+  let db = start_with(process.new_name("pog_test"), Some(respond_with(5)))
+  let assert Error(_) =
+    exception.rescue(fn() { pog.query("boom") |> pog.execute(db.data) })
+  // The pool still works.
+  assert intercepted_value(db.data) == Ok(5)
+  disconnect(db)
+}
+
+pub fn interceptor_crash_in_transaction_gives_back_the_connection_test() {
+  // pool_size is 1: if the crash kept the connection, the next transaction
+  // would get no connection.
+  let db = start_with(process.new_name("pog_test"), Some(respond_with(6)))
+  let assert Error(_) =
+    exception.rescue(fn() {
+      pog.transaction(db.data, fn(connection) {
+        pog.query("boom") |> pog.execute(connection)
+      })
+    })
+  let assert Ok(value) =
+    pog.transaction(db.data, fn(connection) { intercepted_value(connection) })
+  assert value == 6
+  let assert Ok(pog.Returned(_, [1])) =
+    pog.query("select 1")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(db.data)
+  disconnect(db)
+}
+
+pub fn interceptor_capture_gets_the_result_of_the_query_test() {
+  let results = process.new_subject()
+  let interceptor =
+    pog.Interceptor(fn(_request) {
+      pog.Capture(on_result: fn(result) { process.send(results, result) })
+    })
+  let db = start_with(process.new_name("pog_test"), Some(interceptor))
+  let assert Ok(pog.Returned(1, [1])) =
+    pog.query("select 1")
+    |> pog.returning(decode.at([0], decode.int))
+    |> pog.execute(db.data)
+  let assert Ok(Ok(#(1, [_]))) = process.receive(results, 1000)
   disconnect(db)
 }

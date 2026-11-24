@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a query interceptor: `interceptor`, `disconnected`, and the
+  `Interceptor`, `InterceptRequest` and `InterceptResult` types. A pool
+  without an interceptor does not use the interceptor of an earlier pool with
+  the same name.
 - A driver error with an unknown shape now gives `ConnectionUnavailable` and a
   `logger` warning. Before, it crashed the calling process.
 - Added the `SslVerifiedCaFile(path)` SSL setting. It reads the CA

@@ -1,9 +1,29 @@
 -module(pog_ffi).
 
--export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, convert_error/1]).
+-export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, get_pool_interceptor/1, get_pool_interceptor_safe/1, cleanup_checkout_interceptor/1, convert_error/1]).
 
 -include_lib("pog/include/pog_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
+
+-define(INTERCEPTOR_TABLE, pog_interceptor_table).
+
+ensure_interceptor_table() ->
+    case ets:info(?INTERCEPTOR_TABLE) of
+        undefined ->
+            % Two processes can both find no table. Then the second ets:new
+            % fails, and the table that the first one made is correct.
+            try
+                ets:new(
+                    ?INTERCEPTOR_TABLE,
+                    [named_table, public, set, {heir, whereis(init), undefined}]
+                )
+            catch
+                error:badarg -> ok
+            end,
+            ok;
+        _ ->
+            ok
+    end.
 
 null() ->
     null.
@@ -98,7 +118,9 @@ pem_entries(Pem) ->
 start(Config) ->
     case pool_options(Config) of
         {ok, Options} ->
-            #config{pool_name = PoolName} = Config,
+            #config{pool_name = PoolName, interceptor = Interceptor} = Config,
+            ensure_interceptor_table(),
+            ets:insert(?INTERCEPTOR_TABLE, {PoolName, Interceptor}),
             pgo_pool:start_link(PoolName, Options);
         {error, _} = Error ->
             Error
@@ -193,7 +215,13 @@ count(_) ->
 
 checkout(Name) when is_atom(Name) ->
     case pgo:checkout(Name) of
-        {ok, Ref, Conn} -> {ok, {Ref, Conn}};
+        {ok, Ref, Conn} ->
+            % Copy pool's interceptor to connection for transaction support
+            case pool_interceptor(Name) of
+                {some, Interceptor} -> put({pog_conn_interceptor, Conn}, Interceptor);
+                none -> ok
+            end,
+            {ok, {Ref, Conn}};
         {error, Error} -> {error, convert_error(Error)}
     end.
 
@@ -246,3 +274,41 @@ convert_error(Other) ->
         error_term => list_to_binary(io_lib:format("~p", [Other]))
     }),
     connection_unavailable.
+
+%% Interceptor support
+%% The interceptor of a pool is the row {PoolName, Interceptor} of the
+%% interceptor table, with the interceptor as an option. The row is written
+%% before the pool starts, so the first query of the pool uses it.
+pool_interceptor(PoolName) ->
+    try ets:lookup(?INTERCEPTOR_TABLE, PoolName) of
+        [{PoolName, Interceptor}] -> Interceptor;
+        [] -> none
+    catch
+        error:badarg -> none
+    end.
+
+%% Get interceptor for a connection
+get_pool_interceptor(Connection) ->
+    case Connection of
+        {pool, Name} ->
+            pool_interceptor(Name);
+        {single_connection, Conn} ->
+            % For single connections (from transactions), lookup by connection handle
+            case get({pog_conn_interceptor, Conn}) of
+                undefined -> none;
+                Interceptor -> {some, Interceptor}
+            end
+    end.
+
+get_pool_interceptor_safe(Connection) ->
+    case Connection of
+        {pool, _} -> get_pool_interceptor(Connection);
+        {single_connection, _} -> get_pool_interceptor(Connection);
+        {disconnected, _} -> none;
+        _ -> none
+    end.
+
+%% Cleanup interceptor reference when connection is checked back in
+cleanup_checkout_interceptor(Conn) ->
+    erase({pog_conn_interceptor, Conn}),
+    nil.
