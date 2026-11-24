@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `Returned.count` is always an `Int`. A command without a row count, such
+  as `CREATE TABLE` or `SET`, gives 0, as `PQcmdTuples` of libpq. Before, the
+  count was an atom such as `table` or `nil`.
+
 ## v4.1.0 - 2025-07-14
 
 - Added a `numeric_decoder` to decode numeric types coming from postgres.

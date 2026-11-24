@@ -138,6 +138,19 @@ pub fn inserting_new_rows_and_returning_test() {
   disconnect(db)
 }
 
+// A command without a row count, such as CREATE TABLE or SET, gives the
+// count 0, as `PQcmdTuples` of libpq.
+pub fn command_without_row_count_test() {
+  let db = start_default()
+  assert pog.query("CREATE TEMPORARY TABLE count_test (id int)")
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 0, rows: []))
+  assert pog.query("SET search_path TO public")
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 0, rows: []))
+  disconnect(db)
+}
+
 pub fn selecting_rows_test() {
   let db = start_default()
   let sql =

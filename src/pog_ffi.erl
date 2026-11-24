@@ -95,7 +95,7 @@ query(Pool, Sql, Arguments, Timeout) ->
     end,
     case Res of
         #{rows := Rows, num_rows := NumRows} ->
-            {ok, {NumRows, Rows}};
+            {ok, {count(NumRows), Rows}};
 
         {error, Error} ->
             {error, convert_error(Error)}
@@ -104,11 +104,20 @@ query(Pool, Sql, Arguments, Timeout) ->
 query_extended(Conn, Sql) ->
     case pgo_handler:extended_query(Conn, Sql, [], #{queue_time => undefined}) of
         #{rows := Rows, num_rows := NumRows} ->
-            {ok, {NumRows, Rows}};
+            {ok, {count(NumRows), Rows}};
 
         {error, Error} ->
             {error, convert_error(Error)}
     end.
+
+%% The driver gives the row count of the command tag, or for a command
+%% without a row count (such as CREATE TABLE) the atom `nil` or the object
+%% of the tag (such as `table`). Such a command has the count 0, as
+%% `PQcmdTuples` of libpq gives an empty string for it.
+count(NumRows) when is_integer(NumRows) ->
+    NumRows;
+count(_) ->
+    0.
 
 checkout(Name) when is_atom(Name) ->
     case pgo:checkout(Name) of
