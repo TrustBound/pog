@@ -10,18 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # container: ubuntu:20.04
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    # The PostgreSQL server comes from docker-compose.yml, not from a service
+    # container, so the tests use the same server in CI and on a laptop.
     steps:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
@@ -33,12 +23,15 @@ jobs:
           gleam-version: "1.14.0"
           rebar3-version: "3"
           # ImageOS: ubuntu20
+      - run: docker compose up -d --wait
       - run: gleam build
       - run: ./test/reset_db.sh
         env:
           PGHOST: localhost
-          PGPORT: 5432
+          PGPORT: 5438
           PGPASSWORD: postgres
           PGUSER: postgres
       - run: gleam test
+        env:
+          PGPORT: 5438
       - run: gleam format --check src test

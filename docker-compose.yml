@@ -1,0 +1,24 @@
+# The PostgreSQL server for the tests. Start it with
+# `docker compose up -d --wait` and stop it with `docker compose down`.
+# It keeps no data: each start gives an empty database.
+#
+# The host port is 5438, so the tests do not use a PostgreSQL server that
+# already listens on 5432. Give the port to the tests with the environment
+# variable PGPORT (5438).
+
+name: pog
+
+services:
+  # The server for the tests. SSL is off.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5438:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

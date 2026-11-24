@@ -2,14 +2,18 @@
 
 ### Running tests
 
-Initialize a Postgres Database, and use as environment variables:
+The tests need a PostgreSQL server. `docker-compose.yml` starts one, on the
+host port 5438:
 
 ```sh
+docker compose up -d --wait
 export PGUSER="postgres"
 export PGHOST="localhost"
 export PGPASSWORD="postgres"
-export PGUSER="postgres"
-export PGPORT=5432
+export PGPORT=5438
+./test/reset_db.sh
+gleam test
+docker compose down
 ```
 
-You can then run `reset_db.sh` and `gleam test`.
+Without `PGPORT` the tests use port 5432.

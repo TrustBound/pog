@@ -24,9 +24,13 @@ fn start_default() -> actor.Started(pog.Connection) {
   started
 }
 
+@external(erlang, "pog_test_ffi", "env_port")
+fn env_port(name: String, default: Int) -> Int
+
 fn default_config(name) {
   pog.Config(
     ..pog.default_config(name),
+    port: env_port("PGPORT", 5432),
     database: "gleam_pog_test",
     password: Some("postgres"),
     pool_size: 1,
