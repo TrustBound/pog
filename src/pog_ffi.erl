@@ -120,8 +120,7 @@ start(Config) ->
         {ok, Options} ->
             #config{pool_name = PoolName, interceptor = Interceptor} = Config,
             ensure_interceptor_table(),
-            ets:insert(?INTERCEPTOR_TABLE, {PoolName, Interceptor}),
-            pgo_pool:start_link(PoolName, Options);
+            start_pool(PoolName, Interceptor, Options);
         {error, _} = Error ->
             Error
     end.
@@ -276,12 +275,92 @@ convert_error(Other) ->
     connection_unavailable.
 
 %% Interceptor support
-%% The interceptor of a pool is the row {PoolName, Interceptor} of the
+%% The interceptor of a pool is the row {PoolName, Keeper, Interceptor} of the
 %% interceptor table, with the interceptor as an option. The row is written
-%% before the pool starts, so the first query of the pool uses it.
+%% before the pool starts, so the first query of the pool uses it, and the
+%% keeper process removes it when the pool stops. Only the start that inserts
+%% the row starts the pool, so two starts of the same name do not race, and a
+%% start that fails does not touch the row of another start.
+start_pool(PoolName, Interceptor, Options) ->
+    case whereis(PoolName) of
+        undefined -> claim_pool(PoolName, Interceptor, Options);
+        Pool -> {error, {already_started, Pool}}
+    end.
+
+claim_pool(PoolName, Interceptor, Options) ->
+    Starter = self(),
+    Keeper = spawn(fun() -> keep_interceptor(PoolName, Starter) end),
+    case ets:insert_new(?INTERCEPTOR_TABLE, {PoolName, Keeper, Interceptor}) of
+        true ->
+            case pgo_pool:start_link(PoolName, Options) of
+                {ok, Pool} = Started ->
+                    Keeper ! {started, Pool},
+                    Started;
+                Error ->
+                    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, Keeper, '_'}),
+                    Keeper ! failed,
+                    Error
+            end;
+        false ->
+            Keeper ! failed,
+            wait_for_other_start(PoolName, Interceptor, Options)
+    end.
+
+%% Another start has the row: of a pool that runs, of a start that is not
+%% done yet, or of a pool that stopped before its keeper removed the row. The
+%% keeper of the row gives the pool when the pool runs. It stops when there is
+%% no pool, and then this start tries again.
+wait_for_other_start(PoolName, Interceptor, Options) ->
+    case ets:lookup(?INTERCEPTOR_TABLE, PoolName) of
+        [{PoolName, Other, _}] ->
+            Ref = erlang:monitor(process, Other),
+            Other ! {pool, self(), Ref},
+            receive
+                {Ref, Pool} ->
+                    erlang:demonitor(Ref, [flush]),
+                    {error, {already_started, Pool}};
+                {'DOWN', Ref, process, Other, _} ->
+                    % A keeper that was killed did not remove its row.
+                    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, Other, '_'}),
+                    start_pool(PoolName, Interceptor, Options)
+            end;
+        [] ->
+            start_pool(PoolName, Interceptor, Options)
+    end.
+
+%% Removes the row of a pool when the pool stops, when its start fails, or
+%% when the process that starts the pool stops before the pool starts.
+keep_interceptor(PoolName, Starter) ->
+    StarterRef = erlang:monitor(process, Starter),
+    receive
+        {started, Pool} ->
+            erlang:demonitor(StarterRef, [flush]),
+            keep_pool(Pool, erlang:monitor(process, Pool));
+        failed ->
+            ok;
+        {'DOWN', StarterRef, process, Starter, _} ->
+            ok
+    end,
+    ets:match_delete(?INTERCEPTOR_TABLE, {PoolName, self(), '_'}).
+
+%% Gives the pool to each start that asks, until the pool stops.
+keep_pool(Pool, PoolRef) ->
+    receive
+        {'DOWN', PoolRef, process, Pool, _} ->
+            ok;
+        {pool, From, Ref} ->
+            case is_process_alive(Pool) of
+                true ->
+                    From ! {Ref, Pool},
+                    keep_pool(Pool, PoolRef);
+                false ->
+                    ok
+            end
+    end.
+
 pool_interceptor(PoolName) ->
     try ets:lookup(?INTERCEPTOR_TABLE, PoolName) of
-        [{PoolName, Interceptor}] -> Interceptor;
+        [{PoolName, _Keeper, Interceptor}] -> Interceptor;
         [] -> none
     catch
         error:badarg -> none

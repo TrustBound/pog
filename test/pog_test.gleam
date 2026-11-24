@@ -1,9 +1,12 @@
 import exception
 import gleam/dynamic
 import gleam/dynamic/decode.{type Decoder}
+import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/time/calendar
 import gleam/time/timestamp
 import gleeunit
@@ -970,4 +973,150 @@ pub fn interceptor_capture_gets_the_result_of_the_query_test() {
     |> pog.execute(db.data)
   let assert Ok(Ok(#(1, [_]))) = process.receive(results, 1000)
   disconnect(db)
+}
+
+// Interceptor ownership tests: the interceptor belongs to the pool process.
+
+@external(erlang, "pog_test_ffi", "interceptor_rows")
+fn interceptor_rows(name: process.Name(pog.Message)) -> List(dynamic.Dynamic)
+
+@external(erlang, "pog_test_ffi", "interceptor_keeper")
+fn interceptor_keeper(
+  name: process.Name(pog.Message),
+) -> Result(process.Pid, Nil)
+
+@external(erlang, "gleam_stdlib", "identity")
+fn to_dynamic(value: a) -> dynamic.Dynamic
+
+/// The error of a start with the name of a pool that runs.
+fn already_started(db: actor.Started(a)) -> actor.StartError {
+  actor.InitExited(
+    process.Abnormal(
+      to_dynamic(#(atom.create("already_started"), to_dynamic(db.pid))),
+    ),
+  )
+}
+
+pub fn interceptor_failed_start_keeps_the_interceptor_test() {
+  let name = process.new_name("pog_test")
+  let first = start_with(name, Some(respond_with(11)))
+  let second =
+    pog.Config(..default_config(name), interceptor: Some(respond_with(12)))
+    |> pog.start
+  assert second == Error(already_started(first))
+  assert intercepted_value(first.data) == Ok(11)
+  disconnect(first)
+}
+
+pub fn interceptor_failed_start_without_interceptor_keeps_the_interceptor_test() {
+  let name = process.new_name("pog_test")
+  let first = start_with(name, Some(respond_with(13)))
+  let second =
+    pog.Config(..default_config(name), interceptor: None)
+    |> pog.start
+  assert second == Error(already_started(first))
+  assert intercepted_value(first.data) == Ok(13)
+  disconnect(first)
+}
+
+pub fn interceptor_is_removed_when_the_pool_stops_test() {
+  let name = process.new_name("pog_test")
+  let db = start_with(name, Some(respond_with(14)))
+  let keeper = interceptor_keeper(name)
+  stop_and_wait(name, db)
+  case keeper {
+    Ok(pid) -> {
+      let monitor = process.monitor(pid)
+      let assert Ok(_) =
+        process.new_selector()
+        |> process.select_specific_monitor(monitor, fn(down) { down })
+        |> process.selector_receive(1000)
+      Nil
+    }
+    Error(Nil) -> Nil
+  }
+  assert interceptor_rows(name) == []
+  assert result.is_ok(keeper)
+}
+
+/// Waits until a process has the name, without a pause between the tries.
+fn wait_for_name(name: process.Name(pog.Message), tries: Int) -> Nil {
+  case process.named(name), tries {
+    Ok(_), _ -> Nil
+    Error(Nil), 0 -> panic as "the pool did not start"
+    Error(Nil), _ -> wait_for_name(name, tries - 1)
+  }
+}
+
+pub fn interceptor_applies_to_the_first_query_after_start_test() {
+  let name = process.new_name("pog_test")
+  let results = process.new_subject()
+  process.spawn_unlinked(fn() {
+    wait_for_name(name, 10_000_000)
+    process.send(results, intercepted_value(pog.named_connection(name)))
+  })
+  let db = start_with(name, Some(respond_with(15)))
+  assert process.receive(results, 1000) == Ok(Ok(15))
+  disconnect(db)
+}
+
+type RaceMessage {
+  Ready(go: process.Subject(Nil))
+  Done(value: Int, started: Bool)
+}
+
+/// A process that starts a pool when it gets the first go message, and stops
+/// the pool when it gets the second.
+fn race_starter(
+  name: process.Name(pog.Message),
+  value: Int,
+  parent: process.Subject(RaceMessage),
+) -> Nil {
+  process.spawn_unlinked(fn() {
+    let go = process.new_subject()
+    process.send(parent, Ready(go))
+    let assert Ok(Nil) = process.receive(go, 1000)
+    let started =
+      pog.Config(..default_config(name), interceptor: Some(respond_with(value)))
+      |> pog.start
+    process.send(parent, Done(value, result.is_ok(started)))
+    let assert Ok(Nil) = process.receive(go, 5000)
+    Nil
+  })
+  Nil
+}
+
+fn race(rounds: Int) -> Nil {
+  case rounds {
+    0 -> Nil
+    _ -> {
+      let name = process.new_name("pog_test")
+      let parent = process.new_subject()
+      race_starter(name, 21, parent)
+      race_starter(name, 22, parent)
+      let assert Ok(Ready(go_one)) = process.receive(parent, 1000)
+      let assert Ok(Ready(go_two)) = process.receive(parent, 1000)
+      process.send(go_one, Nil)
+      process.send(go_two, Nil)
+      let assert Ok(Done(value_one, started_one)) =
+        process.receive(parent, 5000)
+      let assert Ok(Done(value_two, started_two)) =
+        process.receive(parent, 5000)
+      let winners =
+        [#(value_one, started_one), #(value_two, started_two)]
+        |> list.filter(fn(done) { done.1 })
+        |> list.map(fn(done) { done.0 })
+      let value = intercepted_value(pog.named_connection(name))
+      process.send(go_one, Nil)
+      process.send(go_two, Nil)
+      wait_for_free_name(name, 100)
+      let assert [winner] = winners
+      assert value == Ok(winner)
+      race(rounds - 1)
+    }
+  }
+}
+
+pub fn interceptor_two_starts_at_the_same_moment_test() {
+  race(20)
 }
