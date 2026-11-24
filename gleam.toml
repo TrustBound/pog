@@ -8,8 +8,9 @@ gleam = ">= 1.11.0"
 licences = ["Apache-2.0"]
 description = "A fork of pog, the PostgreSQL database client for Gleam, on the dream_pgo driver"
 
-repository = { type = "github", user = "TrustBound", repo = "dream_pog" }
+repository = { type = "github", user = "TrustBound", repo = "pog" }
 links = [
+  { title = "Source: the dream-pog branch", href = "https://github.com/TrustBound/pog/tree/dream-pog" },
   { title = "Upstream pog by Louis Pilfold", href = "https://github.com/lpil/pog" },
   { title = "Website", href = "https://gleam.run" },
   { title = "Sponsor", href = "https://github.com/sponsors/lpil" },

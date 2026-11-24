@@ -21,7 +21,7 @@ What is different from pog:
   one pool from a PEM file, and `SslVerifiedChainOnly` and
   `SslVerifiedChainOnlyCaFile(path)` make sure of the certificate chain but
   not of the host name (`sslmode=verify-ca` of libpq). Refer to
-  [Solving SSL issues](docs/solving-ssl-issues.md).
+  [Solving SSL issues](https://hexdocs.pm/dream_pog/docs/solving-ssl-issues.html).
 - `url_config` reads `sslmode` and `sslrootcert` as libpq does: `verify-ca`
   checks the chain only, `verify-full` also checks the host name, and
   `sslrootcert=<path>` selects the CA file form of the mode.
@@ -111,8 +111,8 @@ pub fn run(db: pog.Connection) {
     |> pog.execute(db)
 
   // And then do something with the returned results
-  assert data.count == 2
-  assert data.rows == [#("Nubi", 3, "black", ["Al", "Cutlass"])])
+  assert data.count == 1
+  assert data.rows == [#("Nubi", 3, "black", ["Al", "Cutlass"])]
 }
 ```
 
@@ -128,6 +128,7 @@ Interceptors allow you to observe, log, or modify query execution. They're calle
 
 ```gleam
 import gleam/io
+import gleam/option.{Some}
 import dream_pog as pog
 
 let logger = pog.Interceptor(fn(request) {
@@ -143,7 +144,9 @@ pog.default_config(pool_name)
 ### Example - Testing Without a Database
 
 ```gleam
+import dream_pog as pog
 import gleam/dynamic
+import gleam/option.{Some}
 
 let test_data = dynamic.array([
   dynamic.int(1),
@@ -197,6 +200,7 @@ connection URI from the environment.
 ```gleam
 import envoy
 import gleam/erlang/process.{type Name}
+import gleam/result
 import dream_pog as pog
 
 /// Read the DATABASE_URL environment variable and then
