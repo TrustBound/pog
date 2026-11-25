@@ -459,7 +459,9 @@ fn start_tree(config: Config) -> Result(Pid, dynamic.Dynamic)
 /// or it cannot connect for another reason it will continue to attempt to
 /// connect, and any queries made using the connection pool will fail.
 ///
-pub fn supervised(config: Config) -> supervision.ChildSpecification(Connection) {
+pub fn supervised(
+  config: Config,
+) -> supervision.ChildSpecification(Connection) {
   supervision.supervisor(fn() { start(config) })
 }
 
@@ -484,6 +486,23 @@ pub fn text(a: String) -> Value
 
 @external(erlang, "dream_postgres_client_ffi", "coerce")
 pub fn bytea(a: BitArray) -> Value
+
+/// A `numeric` parameter, given as the text of the number. PostgreSQL reads
+/// the text itself, so the value keeps all its digits and its scale, which a
+/// `float` cannot do.
+///
+/// Any text that PostgreSQL accepts for `numeric` works, such as
+/// `"12345678901234567.89"`, `"1.50"`, `"NaN"`, `"Infinity"` and
+/// `"-Infinity"`. A text that is not a number makes the query fail with
+/// `PostgresqlError(code: "22P02", name: "invalid_text_representation", ..)`.
+///
+/// ```gleam
+/// pog.query("insert into prices (amount) values ($1)")
+/// |> pog.parameter(pog.numeric_text("12345678901234567.89"))
+/// ```
+///
+@external(erlang, "dream_postgres_client_ffi", "coerce")
+pub fn numeric_text(value: String) -> Value
 
 pub fn array(converter: fn(a) -> Value, values: List(a)) -> Value {
   list.map(values, converter)
@@ -697,6 +716,7 @@ fn run_query(
   b: String,
   c: List(Value),
   timeout: Int,
+  numeric_as_text: Bool,
 ) -> Result(#(Int, List(Dynamic)), QueryError)
 
 /// A connection that `checkout_for_query` gave.
@@ -710,6 +730,7 @@ fn run_checked_out_query(
   b: String,
   c: List(Value),
   timeout: Int,
+  numeric_as_text: Bool,
 ) -> Result(#(Int, List(Dynamic)), QueryError)
 
 @external(erlang, "dream_postgres_client_ffi", "query_extended")
@@ -760,6 +781,7 @@ pub opaque type Query(row_type) {
     parameters: List(Value),
     row_decoder: Decoder(row_type),
     timeout: Int,
+    numeric_as_text: Bool,
   )
 }
 
@@ -767,7 +789,13 @@ pub opaque type Query(row_type) {
 /// functions.
 ///
 pub fn query(sql: String) -> Query(Nil) {
-  Query(sql:, parameters: [], row_decoder: decode.success(Nil), timeout: 5000)
+  Query(
+    sql:,
+    parameters: [],
+    row_decoder: decode.success(Nil),
+    timeout: 5000,
+    numeric_as_text: False,
+  )
 }
 
 /// Set the decoder to use for the type of row returned by executing this
@@ -778,8 +806,9 @@ pub fn query(sql: String) -> Query(Nil) {
 /// against the database.
 ///
 pub fn returning(query: Query(t1), decoder: Decoder(t2)) -> Query(t2) {
-  let Query(sql:, parameters:, row_decoder: _, timeout:) = query
-  Query(sql:, parameters:, row_decoder: decoder, timeout:)
+  let Query(sql:, parameters:, row_decoder: _, timeout:, numeric_as_text:) =
+    query
+  Query(sql:, parameters:, row_decoder: decoder, timeout:, numeric_as_text:)
 }
 
 /// Push a new query parameter value for the query.
@@ -795,6 +824,25 @@ pub fn parameter(query: Query(t1), parameter: Value) -> Query(t1) {
 ///
 pub fn timeout(query: Query(t1), timeout: Int) -> Query(t1) {
   Query(..query, timeout:)
+}
+
+/// Read each `numeric` value of the result as the text of the number, not as
+/// a float. The text is the same as `value::text` in PostgreSQL: the sign,
+/// all the digits of the scale with the trailing zeros, and `NaN`,
+/// `Infinity` and `-Infinity`. A `numeric(20,2)` of 1.5 is `"1.50"`. Decode
+/// the column with `numeric_text_decoder`.
+///
+/// Without this function, a `numeric` value is an `Int` or a `Float`, and a
+/// `Float` can lose digits. The elements of a `numeric` array are also text.
+///
+/// ```gleam
+/// pog.query("select amount from prices")
+/// |> pog.numeric_as_text
+/// |> pog.returning(decode.at([0], pog.numeric_text_decoder()))
+/// ```
+///
+pub fn numeric_as_text(query: Query(t)) -> Query(t) {
+  Query(..query, numeric_as_text: True)
 }
 
 /// Run a query against a PostgreSQL database.
@@ -835,13 +883,20 @@ pub fn execute(
           query.sql,
           parameters,
           query.timeout,
+          query.numeric_as_text,
         )
       })
     }
 
     SingleConnection(conn) ->
       intercept(conn, query, parameters, fn() {
-        run_query(pool, query.sql, parameters, query.timeout)
+        run_query(
+          pool,
+          query.sql,
+          parameters,
+          query.timeout,
+          query.numeric_as_text,
+        )
       })
   }
 }
@@ -1229,4 +1284,13 @@ fn seconds_decoder() -> decode.Decoder(#(Int, Int)) {
 ///
 pub fn numeric_decoder() -> decode.Decoder(Float) {
   decode.one_of(decode.float, [decode.int |> decode.map(int.to_float)])
+}
+
+/// Decode a PostgreSQL numeric as the exact text of the number, such as
+/// `"12345678901234567.89"`, `"1.50"`, `"NaN"` or `"-Infinity"`. Use it with a
+/// query that `numeric_as_text` changed: without that, a `numeric` value is a
+/// number, not a text, and this decoder fails.
+///
+pub fn numeric_text_decoder() -> decode.Decoder(String) {
+  decode.string
 }

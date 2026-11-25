@@ -468,6 +468,124 @@ pub fn numeric_test() {
   disconnect(db)
 }
 
+pub fn numeric_as_text_test() {
+  let db = start_default()
+  let row = {
+    use a <- decode.field(0, pog.numeric_text_decoder())
+    use b <- decode.field(1, pog.numeric_text_decoder())
+    use c <- decode.field(2, pog.numeric_text_decoder())
+    use d <- decode.field(3, pog.numeric_text_decoder())
+    use e <- decode.field(4, pog.numeric_text_decoder())
+    use f <- decode.field(5, pog.numeric_text_decoder())
+    use g <- decode.field(6, pog.numeric_text_decoder())
+    decode.success([a, b, c, d, e, f, g])
+  }
+  assert pog.query(
+      "select 1.5::numeric(20,2), 0::numeric(20,2), 42::numeric,
+       -0.000000000000000000001::numeric, 1e30::numeric,
+       'NaN'::numeric, '-Infinity'::numeric",
+    )
+    |> pog.numeric_as_text
+    |> pog.returning(row)
+    |> pog.execute(db.data)
+    == Ok(
+      pog.Returned(count: 1, rows: [
+        [
+          "1.50", "0.00", "42", "-0.000000000000000000001",
+          "1000000000000000000000000000000", "NaN", "-Infinity",
+        ],
+      ]),
+    )
+  disconnect(db)
+}
+
+pub fn numeric_as_text_after_returning_test() {
+  let db = start_default()
+  assert pog.query("select 12345678901234567.89::numeric")
+    |> pog.returning(decode.at([0], pog.numeric_text_decoder()))
+    |> pog.numeric_as_text
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 1, rows: ["12345678901234567.89"]))
+  disconnect(db)
+}
+
+pub fn numeric_as_text_array_test() {
+  let db = start_default()
+  assert pog.query("select array[1.50, 2]::numeric[]")
+    |> pog.numeric_as_text
+    |> pog.returning(decode.at([0], decode.list(pog.numeric_text_decoder())))
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 1, rows: [["1.50", "2"]]))
+  disconnect(db)
+}
+
+pub fn numeric_as_text_in_transaction_test() {
+  let db = start_default()
+  assert pog.transaction(db.data, fn(db) {
+      pog.query("select 1.50::numeric")
+      |> pog.numeric_as_text
+      |> pog.returning(decode.at([0], pog.numeric_text_decoder()))
+      |> pog.execute(db)
+    })
+    == Ok(pog.Returned(count: 1, rows: ["1.50"]))
+  disconnect(db)
+}
+
+pub fn numeric_without_text_stays_float_test() {
+  let db = start_default()
+  assert pog.query("select 12345678901234567.89::numeric")
+    |> pog.returning(decode.at([0], pog.numeric_decoder()))
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 1, rows: [12_345_678_901_234_568.0]))
+  disconnect(db)
+}
+
+pub fn numeric_text_parameter_test() {
+  let db = start_default()
+  assert pog.query("select $1::numeric::text")
+    |> pog.parameter(pog.numeric_text("12345678901234567.89"))
+    |> pog.returning(decode.at([0], decode.string))
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 1, rows: ["12345678901234567.89"]))
+  disconnect(db)
+}
+
+pub fn numeric_text_round_trip_test() {
+  start_default()
+  |> assert_numeric_text_round_trip("1.500")
+  |> assert_numeric_text_round_trip("-0.000000000000000000001")
+  |> assert_numeric_text_round_trip("NaN")
+  |> assert_numeric_text_round_trip("Infinity")
+  |> assert_numeric_text_round_trip("-Infinity")
+  |> disconnect
+}
+
+fn assert_numeric_text_round_trip(
+  db: actor.Started(pog.Connection),
+  value: String,
+) -> actor.Started(pog.Connection) {
+  assert pog.query("select $1::numeric")
+    |> pog.parameter(pog.numeric_text(value))
+    |> pog.numeric_as_text
+    |> pog.returning(decode.at([0], pog.numeric_text_decoder()))
+    |> pog.execute(db.data)
+    == Ok(pog.Returned(count: 1, rows: [value]))
+  db
+}
+
+pub fn numeric_text_parameter_not_a_number_test() {
+  let db = start_default()
+  assert pog.query("select $1::numeric")
+    |> pog.parameter(pog.numeric_text("abc"))
+    |> pog.execute(db.data)
+    == Error(pog.PostgresqlError(
+      code: "22P02",
+      name: "invalid_text_representation",
+      message: "invalid input syntax for type numeric: \"abc\"",
+    ))
+  disconnect(db)
+}
+
 pub fn text_test() {
   start_default()
   |> assert_roundtrip("", "text", pog.text, decode.string)
@@ -1136,11 +1254,12 @@ fn invalid_sql(
   pog.query("select       select") |> pog.execute(connection)
 }
 
-const syntax_error = pog.PostgresqlError(
-  code: "42601",
-  name: "syntax_error",
-  message: "syntax error at or near \"select\"",
-)
+const syntax_error =
+  pog.PostgresqlError(
+    code: "42601",
+    name: "syntax_error",
+    message: "syntax error at or near \"select\"",
+  )
 
 pub fn capture_error_fails_a_successful_query_in_a_pool_test() {
   let db =

@@ -1,6 +1,6 @@
 -module(dream_postgres_client_ffi).
 
--export([query/4, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, checkout/2, interceptor/1, convert_error/1]).
+-export([query/5, query_extended/2, start/1, pool_options/1, coerce/1, null/0, checkout/1, checkout/2, interceptor/1, convert_error/1]).
 
 -include_lib("dream_postgres_client/include/dream_postgres_client_Config.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
@@ -155,15 +155,19 @@ pool_options(Config) ->
             Error
     end.
 
-query(Pool, Sql, Arguments, _Timeout) ->
+query(Pool, Sql, Arguments, _Timeout, NumericAsText) ->
+    DecodeOptions = case NumericAsText of
+        true -> [numeric_as_text];
+        false -> []
+    end,
     Res = case Pool of
         {single_connection, Conn} ->
-            dream_postgres_driver_handler:extended_query(Conn, Sql, Arguments, #{});
+            dream_postgres_driver_handler:extended_query(Conn, Sql, Arguments, DecodeOptions, #{});
         {checked_out, {_, _, _, Holder}, Conn} ->
             % As dream_postgres_driver:query/3 runs a query on a connection of the pool:
             % the pool removes the holder when the timeout of the checkout
             % passes.
-            case dream_postgres_driver:query(Sql, Arguments, #{}, Conn) of
+            case dream_postgres_driver:query(Sql, Arguments, #{decode_opts => DecodeOptions}, Conn) of
                 {error, Closed} when Closed =:= closed; Closed =:= einval ->
                     case ets:info(Holder, size) of
                         undefined -> {error, query_timeout};

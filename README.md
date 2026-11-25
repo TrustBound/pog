@@ -218,6 +218,26 @@ When writing or reading a JSON, you can simply use
 `pog.text(json.to_string(my_json))` and `decode.string` to respectively write
 and read them!
 
+## Exact numeric
+
+By default, a `numeric` value comes back as an `Int` or a `Float`, and a
+`Float` can lose digits. `numeric_as_text` makes each `numeric` value of a
+query come back as the exact text of the number, the same text as
+`value::text` in PostgreSQL. `numeric_text` gives a `numeric` parameter as
+text, and PostgreSQL reads that text itself.
+
+```gleam
+pog.query("select amount from prices where amount > $1")
+|> pog.parameter(pog.numeric_text("12345678901234567.89"))
+|> pog.numeric_as_text
+|> pog.returning(decode.at([0], pog.numeric_text_decoder()))
+|> pog.execute(db)
+// Ok(Returned(1, ["12345678901234567.90"]))
+```
+
+A `numeric(20,2)` of 1.5 is `"1.50"`. The special values are `"NaN"`,
+`"Infinity"` and `"-Infinity"`.
+
 ## Timeout
 
 By default, every pog query has a 5 seconds timeout, and every query taking more
