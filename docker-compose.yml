@@ -6,6 +6,14 @@
 # server that already listens on 5432. Give the ports to the tests with the
 # environment variables PGPORT (5438) and DREAM_POSTGRES_CLIENT_SSL_PGPORT
 # (5439).
+#
+# The test databases are thrown away, so each server keeps its data in
+# memory (tmpfs, 2 GB at most) and never on Docker's disk, and turns off the
+# settings that make data survive a crash (fsync, synchronous_commit,
+# full_page_writes). Never use these settings for data you want to keep.
+# The tmpfs is mounted on the data volume of the image:
+# /var/lib/postgresql/data up to PostgreSQL 17, /var/lib/postgresql from 18.
+# CI starts these servers from this file.
 
 name: dream_postgres_client
 
@@ -18,6 +26,16 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5438:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=2g
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 1s
@@ -35,6 +53,8 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5439:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=2g
     volumes:
       - ./test/fixtures/ssl:/certs:ro
     # PostgreSQL refuses a key file that the user `postgres` does not own,
@@ -50,6 +70,9 @@ services:
         -c ssl=on
         -c ssl_cert_file=/var/lib/postgresql/server.crt
         -c ssl_key_file=/var/lib/postgresql/server.key
+        -c fsync=off
+        -c synchronous_commit=off
+        -c full_page_writes=off
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 1s
