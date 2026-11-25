@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.0 - 2026-11-25
+
+- Added `numeric_as_text(query)`. With it, each `numeric` value of the
+  result (also the elements of a `numeric` array) is the exact text of the
+  number, the same text as `value::text` in PostgreSQL: `"1.50"` for a
+  `numeric(20,2)` of 1.5, `"0.00"`, `"-0.000000000000000000001"`, `"NaN"`,
+  `"Infinity"` and `"-Infinity"`. Without it, a `numeric` value is an `Int`
+  or a `Float` as before. It uses the `numeric_as_text` decode option of
+  `dream_postgres_driver` 1.1.0.
+- Added `numeric_text_decoder()`, which decodes that text to a `String`.
+- Added `numeric_text(value: String) -> Value` for a `numeric` parameter.
+  PostgreSQL reads the text itself, so the value keeps all its digits and
+  its scale. A text that is not a number gives
+  `PostgresqlError(code: "22P02", name: "invalid_text_representation", ..)`.
+- Needs `dream_postgres_driver` 1.1.0 or later.
+
+Tests: 107 tests pass against PostgreSQL 16 in Docker (Gleam 1.19.2, OTP 29, Apple M1 Max, 64 GB, macOS 26.5.1).
+
 ## v1.0.0 - 2026-11-24
 
 The first release of `dream_postgres_client`, a fork of pog v4.1.0.
